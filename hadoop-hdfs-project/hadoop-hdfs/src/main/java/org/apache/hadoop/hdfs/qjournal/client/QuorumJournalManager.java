@@ -34,6 +34,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.CommonConfigurationKeys;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.DFSUtil;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetJournalStateResponseProto;
@@ -90,7 +91,8 @@ public class QuorumJournalManager implements JournalManager {
   
   private final AsyncLoggerSet loggers;
 
-  private int outputBufferCapacity = 512 * 1024;
+  private static final int OUTPUT_BUFFER_CAPACITY_DEFAULT = 512 * 1024;
+  private int outputBufferCapacity;
   private final URLConnectionFactory connectionFactory;
 
   @VisibleForTesting
@@ -156,6 +158,7 @@ public class QuorumJournalManager implements JournalManager {
             .DFS_QJM_OPERATIONS_TIMEOUT,
         DFSConfigKeys.DFS_QJM_OPERATIONS_TIMEOUT_DEFAULT, TimeUnit
             .MILLISECONDS);
+    setOutputBufferCapacity(OUTPUT_BUFFER_CAPACITY_DEFAULT);
   }
   
   protected List<AsyncLogger> createLoggers(
@@ -417,6 +420,15 @@ public class QuorumJournalManager implements JournalManager {
 
   @Override
   public void setOutputBufferCapacity(int size) {
+    int ipcMaxDataLength = conf.getInt(
+        CommonConfigurationKeys.IPC_MAXIMUM_DATA_LENGTH,
+        CommonConfigurationKeys.IPC_MAXIMUM_DATA_LENGTH_DEFAULT);
+    if (size >= ipcMaxDataLength) {
+      throw new IllegalArgumentException("Attempted to use QJM output buffer "
+          + "capacity (" + size + ") greater than the IPC max data length ("
+          + CommonConfigurationKeys.IPC_MAXIMUM_DATA_LENGTH + " = "
+          + ipcMaxDataLength + "). This will cause journals to reject edits.");
+    }
     outputBufferCapacity = size;
   }
 
