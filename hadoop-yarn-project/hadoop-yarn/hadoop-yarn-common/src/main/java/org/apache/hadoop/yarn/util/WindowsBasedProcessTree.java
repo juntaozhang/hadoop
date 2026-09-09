@@ -23,8 +23,8 @@ import java.math.BigInteger;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hadoop.classification.InterfaceAudience.Private;
 import org.apache.hadoop.util.CpuTimeTracker;
 import org.apache.hadoop.util.Shell;
@@ -34,8 +34,8 @@ import org.apache.hadoop.util.StringUtils;
 @Private
 public class WindowsBasedProcessTree extends ResourceCalculatorProcessTree {
 
-  static final Log LOG = LogFactory
-      .getLog(WindowsBasedProcessTree.class);
+  private static final Logger LOG = LoggerFactory
+      .getLogger(WindowsBasedProcessTree.class);
 
   static class ProcessInfo {
     String pid; // process pid
@@ -133,11 +133,11 @@ public class WindowsBasedProcessTree extends ResourceCalculatorProcessTree {
             pInfo.cpuTimeMs = Long.parseLong(procInfo[3]);
             allProcs.put(pInfo.pid, pInfo);
           } catch (NumberFormatException nfe) {
-            LOG.debug("Error parsing procInfo." + nfe);
+            LOG.debug("Error parsing procInfo.", nfe);
           }
         } else {
-          LOG.debug("Expected split length of proc info to be "
-              + procInfoSplitCount + ". Got " + procInfo.length);
+          LOG.debug("Expected split length of proc info to be {}. Got {}",
+              procInfoSplitCount, procInfo.length);
         }
       }
     }
@@ -215,12 +215,6 @@ public class WindowsBasedProcessTree extends ResourceCalculatorProcessTree {
   }
 
   @Override
-  @SuppressWarnings("deprecation")
-  public long getCumulativeVmem(int olderThanAge) {
-    return getVirtualMemorySize(olderThanAge);
-  }
-
-  @Override
   public long getRssMemorySize(int olderThanAge) {
     long total = UNAVAILABLE;
     for (ProcessInfo p : processTree.values()) {
@@ -234,12 +228,6 @@ public class WindowsBasedProcessTree extends ResourceCalculatorProcessTree {
       }
     }
     return total;
-  }
-
-  @Override
-  @SuppressWarnings("deprecation")
-  public long getCumulativeRssmem(int olderThanAge) {
-    return getRssMemorySize(olderThanAge);
   }
 
   @Override
@@ -268,6 +256,14 @@ public class WindowsBasedProcessTree extends ResourceCalculatorProcessTree {
     return BigInteger.valueOf(totalMs);
   }
 
+  /**
+   * Get the CPU usage by all the processes in the process-tree in Windows.
+   * Note: UNAVAILABLE will be returned in case when CPU usage is not
+   * available. It is NOT advised to return any other error code.
+   *
+   * @return percentage CPU usage since the process-tree was created,
+   * {@link #UNAVAILABLE} if CPU usage cannot be calculated or not available.
+   */
   @Override
   public float getCpuUsagePercent() {
     BigInteger processTotalMs = getTotalProcessMs();

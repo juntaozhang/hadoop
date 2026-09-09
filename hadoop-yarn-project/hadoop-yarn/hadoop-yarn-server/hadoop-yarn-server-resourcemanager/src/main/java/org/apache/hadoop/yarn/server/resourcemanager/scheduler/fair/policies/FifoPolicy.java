@@ -21,23 +21,26 @@ import java.io.Serializable;
 import java.util.Collection;
 import java.util.Comparator;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hadoop.classification.InterfaceAudience.Private;
 import org.apache.hadoop.classification.InterfaceStability.Unstable;
 import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.FSQueue;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.Schedulable;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.SchedulingPolicy;
-
-
 import org.apache.hadoop.yarn.util.resource.DefaultResourceCalculator;
 import org.apache.hadoop.yarn.util.resource.ResourceCalculator;
 import org.apache.hadoop.yarn.util.resource.Resources;
 
-import com.google.common.annotations.VisibleForTesting;
+import org.apache.hadoop.classification.VisibleForTesting;
 
 @Private
 @Unstable
 public class FifoPolicy extends SchedulingPolicy {
+  private static final Logger LOG =
+      LoggerFactory.getLogger(FifoPolicy.class);
+
   @VisibleForTesting
   public static final String NAME = "FIFO";
   private static final FifoComparator COMPARATOR = new FifoComparator();
@@ -96,7 +99,10 @@ public class FifoPolicy extends SchedulingPolicy {
         earliest = schedulable;
       }
     }
-    earliest.setFairShare(Resources.clone(totalResources));
+
+    if (earliest != null) {
+      earliest.setFairShare(Resources.clone(totalResources));
+    }
   }
 
   @Override
@@ -114,11 +120,6 @@ public class FifoPolicy extends SchedulingPolicy {
   }
 
   @Override
-  public boolean checkIfAMResourceUsageOverLimit(Resource usage, Resource maxAMResource) {
-    return usage.getMemorySize() > maxAMResource.getMemorySize();
-  }
-
-  @Override
   public Resource getHeadroom(Resource queueFairShare,
                               Resource queueUsage, Resource maxAvailable) {
     long queueAvailableMemory = Math.max(
@@ -129,9 +130,11 @@ public class FifoPolicy extends SchedulingPolicy {
     return headroom;
   }
 
-
   @Override
-  public byte getApplicableDepth() {
-    return SchedulingPolicy.DEPTH_LEAF;
+  public boolean isChildPolicyAllowed(SchedulingPolicy childPolicy) {
+    LOG.error(getName() + " policy is only for leaf queues. Please choose "
+        + DominantResourceFairnessPolicy.NAME + " or " + FairSharePolicy.NAME
+        + " for parent queues.");
+    return false;
   }
 }

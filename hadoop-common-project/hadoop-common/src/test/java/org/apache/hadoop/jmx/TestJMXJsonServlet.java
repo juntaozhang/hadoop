@@ -20,10 +20,12 @@ package org.apache.hadoop.jmx;
 
 import org.apache.hadoop.http.HttpServer2;
 import org.apache.hadoop.http.HttpServerFunctionalTest;
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
+import javax.servlet.http.HttpServletResponse;
+import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.regex.Matcher;
@@ -36,20 +38,22 @@ public class TestJMXJsonServlet extends HttpServerFunctionalTest {
   private static HttpServer2 server;
   private static URL baseUrl;
 
-  @BeforeClass public static void setup() throws Exception {
+  @BeforeAll
+  public static void setup() throws Exception {
     server = createTestServer();
     server.start();
     baseUrl = getServerURL(server);
   }
   
-  @AfterClass public static void cleanup() throws Exception {
+  @AfterAll
+  public static void cleanup() throws Exception {
     server.stop();
   }
   
   public static void assertReFind(String re, String value) {
     Pattern p = Pattern.compile(re);
     Matcher m = p.matcher(value);
-    assertTrue("'"+p+"' does not match "+value, m.find());
+    assertTrue(m.find(), "'"+p+"' does not match "+value);
   }
   
   @Test public void testQuery() throws Exception {
@@ -60,10 +64,15 @@ public class TestJMXJsonServlet extends HttpServerFunctionalTest {
     result = readOutput(new URL(baseUrl, "/jmx?qry=java.lang:type=Memory"));
     assertReFind("\"name\"\\s*:\\s*\"java.lang:type=Memory\"", result);
     assertReFind("\"modelerType\"", result);
-    
+
+    System.setProperty("THE_TEST_OF_THE_NAN_VALUES", String.valueOf(Float.NaN));
     result = readOutput(new URL(baseUrl, "/jmx"));
     assertReFind("\"name\"\\s*:\\s*\"java.lang:type=Memory\"", result);
-    
+    assertReFind(
+        "\"key\"\\s*:\\s*\"THE_TEST_OF_THE_NAN_VALUES\"\\s*,\\s*\"value\"\\s*:\\s*\"NaN\"",
+        result
+    );
+
     // test to get an attribute of a mbean
     result = readOutput(new URL(baseUrl, 
         "/jmx?get=java.lang:type=Memory::HeapMemoryUsage"));
@@ -81,4 +90,15 @@ public class TestJMXJsonServlet extends HttpServerFunctionalTest {
     assertEquals("GET", conn.getHeaderField(ACCESS_CONTROL_ALLOW_METHODS));
     assertNotNull(conn.getHeaderField(ACCESS_CONTROL_ALLOW_ORIGIN));
   }
+
+  @Test
+  public void testTraceRequest() throws IOException {
+    URL url = new URL(baseUrl, "/jmx");
+    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+    conn.setRequestMethod("TRACE");
+
+    assertEquals(HttpServletResponse.SC_METHOD_NOT_ALLOWED, conn.getResponseCode(),
+        "Unexpected response code");
+  }
+
 }

@@ -68,6 +68,9 @@ public abstract class IncreaseContainersResourceResponse {
   /**
    * Set the list of containerIds of containers whose resource have
    * been successfully increased.
+   *
+   * @param succeedIncreasedContainers list of containerIds of containers whose resource have
+   * been successfully increased.
    */
   @Private
   @Unstable
@@ -77,6 +80,7 @@ public abstract class IncreaseContainersResourceResponse {
   /**
    * Get the containerId-to-exception map in which the exception indicates
    * error from each container for failed requests.
+   * @return map of containerId-to-exception
    */
   @Public
   @Unstable
@@ -85,6 +89,8 @@ public abstract class IncreaseContainersResourceResponse {
   /**
    * Set the containerId-to-exception map in which the exception indicates
    * error from each container for failed requests.
+   *
+   * @param failedRequests map of containerId-to-exception.
    */
   @Private
   @Unstable

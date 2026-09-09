@@ -22,7 +22,7 @@ import java.io.IOException;
 import java.security.PrivilegedExceptionAction;
 import java.util.ArrayList;
 
-import com.google.common.base.Joiner;
+import org.apache.hadoop.thirdparty.com.google.common.base.Joiner;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.Text;
@@ -36,22 +36,22 @@ import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterRequest
 import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterResponse;
-import org.apache.hadoop.yarn.api.records.Token;
 import org.apache.hadoop.yarn.client.ClientRMProxy;
 import org.apache.hadoop.yarn.conf.HAUtil;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.apache.hadoop.yarn.exceptions.YarnRuntimeException;
 import org.apache.hadoop.yarn.security.AMRMTokenIdentifier;
-import org.apache.hadoop.yarn.server.api.DistributedSchedulerProtocol;
+import org.apache.hadoop.yarn.server.api.DistributedSchedulingAMProtocol;
 import org.apache.hadoop.yarn.server.api.ServerRMProxy;
-import org.apache.hadoop.yarn.server.api.protocolrecords
-    .DistSchedAllocateResponse;
-import org.apache.hadoop.yarn.server.api.protocolrecords.DistSchedRegisterResponse;
+import org.apache.hadoop.yarn.server.api.protocolrecords.DistributedSchedulingAllocateRequest;
+import org.apache.hadoop.yarn.server.api.protocolrecords.DistributedSchedulingAllocateResponse;
+import org.apache.hadoop.yarn.server.api.protocolrecords.RegisterDistributedSchedulingAMResponse;
+import org.apache.hadoop.yarn.server.utils.YarnServerSecurityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.annotations.VisibleForTesting;
+import org.apache.hadoop.classification.VisibleForTesting;
 
 /**
  * Extends the AbstractRequestInterceptor class and provides an implementation
@@ -62,7 +62,7 @@ public final class DefaultRequestInterceptor extends
     AbstractRequestInterceptor {
   private static final Logger LOG = LoggerFactory
       .getLogger(DefaultRequestInterceptor.class);
-  private DistributedSchedulerProtocol rmClient;
+  private ApplicationMasterProtocol rmClient;
   private UserGroupInformation user = null;
 
   @Override
@@ -76,15 +76,7 @@ public final class DefaultRequestInterceptor extends
       user.addToken(appContext.getAMRMToken());
       final Configuration conf = this.getConf();
 
-      rmClient =
-          user.doAs(new PrivilegedExceptionAction<DistributedSchedulerProtocol>() {
-            @Override
-            public DistributedSchedulerProtocol run() throws Exception {
-              setAMRMTokenService(conf);
-              return ServerRMProxy.createRMProxy(conf,
-                  DistributedSchedulerProtocol.class);
-            }
-          });
+      rmClient = createRMClient(appContext, conf);
     } catch (IOException e) {
       String message =
           "Error while creating of RM app master service proxy for attemptId:"
@@ -100,6 +92,24 @@ public final class DefaultRequestInterceptor extends
     }
   }
 
+  private ApplicationMasterProtocol createRMClient(
+      AMRMProxyApplicationContext appContext, final Configuration conf)
+      throws IOException, InterruptedException {
+    if (appContext.getNMContext().isDistributedSchedulingEnabled()) {
+      return user.doAs((PrivilegedExceptionAction<DistributedSchedulingAMProtocol>) () -> {
+        setAMRMTokenService(conf);
+        return ServerRMProxy.createRMProxy(conf, DistributedSchedulingAMProtocol.class);
+      });
+    } else {
+      return user.doAs(
+          (PrivilegedExceptionAction<ApplicationMasterProtocol>) () -> {
+            setAMRMTokenService(conf);
+            return ClientRMProxy.createRMProxy(conf,
+                ApplicationMasterProtocol.class);
+          });
+    }
+  }
+
   @Override
   public RegisterApplicationMasterResponse registerApplicationMaster(
       final RegisterApplicationMasterRequest request)
@@ -111,41 +121,52 @@ public final class DefaultRequestInterceptor extends
   @Override
   public AllocateResponse allocate(final AllocateRequest request)
       throws YarnException, IOException {
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("Forwarding allocate request to the real YARN RM");
-    }
+    LOG.debug("Forwarding allocate request to the real YARN RM");
     AllocateResponse allocateResponse = rmClient.allocate(request);
     if (allocateResponse.getAMRMToken() != null) {
-      updateAMRMToken(allocateResponse.getAMRMToken());
+      YarnServerSecurityUtils.updateAMRMToken(allocateResponse.getAMRMToken(),
+          this.user, getConf());
     }
 
     return allocateResponse;
   }
 
   @Override
-  public DistSchedRegisterResponse
+  public RegisterDistributedSchedulingAMResponse
   registerApplicationMasterForDistributedScheduling
       (RegisterApplicationMasterRequest request) throws YarnException,
       IOException {
-    LOG.info("Forwarding registerApplicationMasterForDistributedScheduling" +
-        "request to the real YARN RM");
-    return rmClient.registerApplicationMasterForDistributedScheduling(request);
+    if (getApplicationContext().getNMContext()
+        .isDistributedSchedulingEnabled()) {
+      LOG.info("Forwarding registerApplicationMasterForDistributedScheduling" +
+          "request to the real YARN RM");
+      return ((DistributedSchedulingAMProtocol)rmClient)
+          .registerApplicationMasterForDistributedScheduling(request);
+    } else {
+      throw new YarnException("Distributed Scheduling is not enabled.");
+    }
   }
 
   @Override
-  public DistSchedAllocateResponse allocateForDistributedScheduling
-      (AllocateRequest request) throws YarnException, IOException {
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("Forwarding allocateForDistributedScheduling request" +
-          "to the real YARN RM");
+  public DistributedSchedulingAllocateResponse allocateForDistributedScheduling(
+      DistributedSchedulingAllocateRequest request)
+      throws YarnException, IOException {
+    LOG.debug("Forwarding allocateForDistributedScheduling request" +
+        "to the real YARN RM");
+    if (getApplicationContext().getNMContext()
+        .isDistributedSchedulingEnabled()) {
+      DistributedSchedulingAllocateResponse allocateResponse =
+          ((DistributedSchedulingAMProtocol)rmClient)
+              .allocateForDistributedScheduling(request);
+      if (allocateResponse.getAllocateResponse().getAMRMToken() != null) {
+        YarnServerSecurityUtils.updateAMRMToken(
+            allocateResponse.getAllocateResponse().getAMRMToken(), this.user,
+            getConf());
+      }
+      return allocateResponse;
+    } else {
+      throw new YarnException("Distributed Scheduling is not enabled.");
     }
-    DistSchedAllocateResponse allocateResponse =
-        rmClient.allocateForDistributedScheduling(request);
-    if (allocateResponse.getAllocateResponse().getAMRMToken() != null) {
-      updateAMRMToken(allocateResponse.getAllocateResponse().getAMRMToken());
-    }
-
-    return allocateResponse;
   }
 
   @Override
@@ -165,24 +186,12 @@ public final class DefaultRequestInterceptor extends
             + "Check if the interceptor pipeline configuration is correct");
   }
 
-  private void updateAMRMToken(Token token) throws IOException {
-    org.apache.hadoop.security.token.Token<AMRMTokenIdentifier> amrmToken =
-        new org.apache.hadoop.security.token.Token<AMRMTokenIdentifier>(
-            token.getIdentifier().array(), token.getPassword().array(),
-            new Text(token.getKind()), new Text(token.getService()));
-    // Preserve the token service sent by the RM when adding the token
-    // to ensure we replace the previous token setup by the RM.
-    // Afterwards we can update the service address for the RPC layer.
-    user.addToken(amrmToken);
-    amrmToken.setService(ClientRMProxy.getAMRMTokenService(getConf()));
-  }
-
   @VisibleForTesting
   public void setRMClient(final ApplicationMasterProtocol rmClient) {
-    if (rmClient instanceof DistributedSchedulerProtocol) {
-      this.rmClient = (DistributedSchedulerProtocol)rmClient;
+    if (rmClient instanceof DistributedSchedulingAMProtocol) {
+      this.rmClient = rmClient;
     } else {
-      this.rmClient = new DistributedSchedulerProtocol() {
+      this.rmClient = new DistributedSchedulingAMProtocol() {
         @Override
         public RegisterApplicationMasterResponse registerApplicationMaster
             (RegisterApplicationMasterRequest request) throws YarnException,
@@ -204,7 +213,7 @@ public final class DefaultRequestInterceptor extends
         }
 
         @Override
-        public DistSchedRegisterResponse
+        public RegisterDistributedSchedulingAMResponse
         registerApplicationMasterForDistributedScheduling
             (RegisterApplicationMasterRequest request) throws YarnException,
             IOException {
@@ -212,9 +221,10 @@ public final class DefaultRequestInterceptor extends
         }
 
         @Override
-        public DistSchedAllocateResponse
-        allocateForDistributedScheduling(AllocateRequest request) throws
-            YarnException, IOException {
+        public DistributedSchedulingAllocateResponse
+            allocateForDistributedScheduling(
+            DistributedSchedulingAllocateRequest request)
+                throws YarnException, IOException {
           throw new IOException("Not Supported !!");
         }
       };
@@ -226,16 +236,9 @@ public final class DefaultRequestInterceptor extends
     for (org.apache.hadoop.security.token.Token<? extends TokenIdentifier> token : UserGroupInformation
         .getCurrentUser().getTokens()) {
       if (token.getKind().equals(AMRMTokenIdentifier.KIND_NAME)) {
-        token.setService(getAMRMTokenService(conf));
+        token.setService(ClientRMProxy.getAMRMTokenService(conf));
       }
     }
-  }
-
-  @InterfaceStability.Unstable
-  public static Text getAMRMTokenService(Configuration conf) {
-    return getTokenService(conf, YarnConfiguration.RM_SCHEDULER_ADDRESS,
-        YarnConfiguration.DEFAULT_RM_SCHEDULER_ADDRESS,
-        YarnConfiguration.DEFAULT_RM_SCHEDULER_PORT);
   }
 
   @InterfaceStability.Unstable
@@ -243,7 +246,7 @@ public final class DefaultRequestInterceptor extends
       String defaultAddr, int defaultPort) {
     if (HAUtil.isHAEnabled(conf)) {
       // Build a list of service addresses to form the service name
-      ArrayList<String> services = new ArrayList<String>();
+      ArrayList<String> services = new ArrayList<>();
       YarnConfiguration yarnConf = new YarnConfiguration(conf);
       for (String rmId : HAUtil.getRMHAIds(conf)) {
         // Set RM_ID to get the corresponding RM_ADDRESS

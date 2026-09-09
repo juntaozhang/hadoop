@@ -18,27 +18,22 @@
 
 package org.apache.hadoop.yarn.server.resourcemanager.scheduler;
 
-import org.apache.commons.logging.Log;
+import org.slf4j.Logger;
 
 public class SchedulerAppUtils {
 
-  public static  boolean isBlacklisted(SchedulerApplicationAttempt application,
-      SchedulerNode node, Log LOG) {
-    if (application.isBlacklisted(node.getNodeName())) {
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("Skipping 'host' " + node.getNodeName() +
-            " for " + application.getApplicationId() +
-            " since it has been blacklisted");
-      }
+  public static boolean isPlaceBlacklisted(
+      SchedulerApplicationAttempt application, SchedulerNode node,
+      Logger log) {
+    if (application.isPlaceBlacklisted(node.getNodeName())) {
+      log.debug("Skipping 'host' {} for {} since it has been blacklisted",
+          node.getNodeName(), application.getApplicationId());
       return true;
     }
 
-    if (application.isBlacklisted(node.getRackName())) {
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("Skipping 'rack' " + node.getRackName() +
-            " for " + application.getApplicationId() +
-            " since it has been blacklisted");
-      }
+    if (application.isPlaceBlacklisted(node.getRackName())) {
+      log.debug("Skipping 'rack' {} for {} since it has been blacklisted",
+          node.getRackName(), application.getApplicationId());
       return true;
     }
 

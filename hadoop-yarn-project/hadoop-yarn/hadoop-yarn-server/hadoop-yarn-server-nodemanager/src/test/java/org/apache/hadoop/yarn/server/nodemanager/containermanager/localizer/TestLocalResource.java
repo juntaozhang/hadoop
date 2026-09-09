@@ -24,23 +24,27 @@ import java.util.Random;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.yarn.api.records.LocalResourceType;
 import org.apache.hadoop.yarn.api.records.LocalResourceVisibility;
+import org.apache.hadoop.yarn.api.records.URL;
 import org.apache.hadoop.yarn.factory.providers.RecordFactoryProvider;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.localizer.LocalResourceRequest;
-import org.apache.hadoop.yarn.util.ConverterUtils;
 
 import static org.apache.hadoop.yarn.api.records.LocalResourceType.*;
 import static org.apache.hadoop.yarn.api.records.LocalResourceVisibility.*;
 
-import org.junit.Test;
-import static org.junit.Assert.*;
+import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class TestLocalResource {
 
   static org.apache.hadoop.yarn.api.records.LocalResource getYarnResource(Path p, long size,
       long timestamp, LocalResourceType type, LocalResourceVisibility state, String pattern)
       throws URISyntaxException {
-    org.apache.hadoop.yarn.api.records.LocalResource ret = RecordFactoryProvider.getRecordFactory(null).newRecordInstance(org.apache.hadoop.yarn.api.records.LocalResource.class);
-    ret.setResource(ConverterUtils.getYarnUrlFromURI(p.toUri()));
+    org.apache.hadoop.yarn.api.records.LocalResource ret =
+        RecordFactoryProvider.getRecordFactory(null).newRecordInstance(
+            org.apache.hadoop.yarn.api.records.LocalResource.class);
+    ret.setResource(URL.fromURI(p.toUri()));
     ret.setSize(size);
     ret.setTimestamp(timestamp);
     ret.setType(type);

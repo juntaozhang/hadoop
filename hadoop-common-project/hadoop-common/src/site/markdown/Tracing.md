@@ -31,7 +31,7 @@ Setting up tracing is quite simple, however it requires some very minor changes 
 
 The tracing system works by collecting information in structs called 'Spans'.
 It is up to you to choose how you want to receive this information
-by using implementation of [SpanReceiver](http://htrace.incubator.apache.org/#Span_Receivers)
+by using implementation of [SpanReceiver](http://htrace.incubator.apache.org/developer_guide.html#SpanReceivers)
 interface bundled with HTrace or implementing it by yourself.
 
 [HTrace](http://htrace.incubator.apache.org/) provides options such as
@@ -48,7 +48,7 @@ LocalFileSpanReceiver is included in the htrace-core4 jar which is bundled
 with Hadoop.)
 
 ```
-    $ cp htrace-htraced/target/htrace-htraced-4.0.1-incubating.jar $HADOOP_HOME/share/hadoop/common/lib/
+    $ cp htrace-htraced/target/htrace-htraced-4.1.0-incubating.jar $HADOOP_HOME/share/hadoop/common/lib/
 ```
 
 ### Dynamic update of tracing configuration
@@ -83,6 +83,15 @@ You can specify the configuration associated with span receiver by `-Ckey=value`
       $ hadoop trace -list -host 192.168.56.2:9000
       ID  CLASS
       2   org.apache.htrace.core.LocalFileSpanReceiver
+
+If the cluster is Kerberized, the service principal name must be specified using `-principal` option.
+For example, to show list of span receivers of a namenode:
+
+    $ hadoop trace -list -host NN1:8020 -principal namenode/NN1@EXAMPLE.COM
+
+Or, for a datanode:
+
+    $ hadoop trace -list -host DN2:9867 -principal datanode/DN1@EXAMPLE.COM
 
 ### Starting tracing spans by HTrace API
 

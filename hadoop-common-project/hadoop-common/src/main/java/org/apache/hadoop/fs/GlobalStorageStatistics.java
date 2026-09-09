@@ -23,7 +23,7 @@ import java.util.NavigableMap;
 import java.util.NoSuchElementException;
 import java.util.TreeMap;
 
-import com.google.common.base.Preconditions;
+import org.apache.hadoop.util.Preconditions;
 import org.apache.hadoop.classification.InterfaceAudience;
 
 /**
@@ -66,8 +66,9 @@ public enum GlobalStorageStatistics {
    * @param provider    An object which can create a new StorageStatistics
    *                      object if needed.
    * @return            The StorageStatistics object with the given name.
-   * @throws RuntimeException  If the StorageStatisticsProvider provides a new
-   *                           StorageStatistics object with the wrong name.
+   * @throws RuntimeException  If the StorageStatisticsProvider provides a null
+   *                           object or a new StorageStatistics object with the
+   *                           wrong name.
    */
   public synchronized StorageStatistics put(String name,
       StorageStatisticsProvider provider) {
@@ -78,6 +79,10 @@ public enum GlobalStorageStatistics {
       return stats;
     }
     stats = provider.provide();
+    if (stats == null) {
+      throw new RuntimeException("StorageStatisticsProvider for " + name +
+          " should not provide a null StorageStatistics object.");
+    }
     if (!stats.getName().equals(name)) {
       throw new RuntimeException("StorageStatisticsProvider for " + name +
           " provided a StorageStatistics object for " + stats.getName() +
@@ -88,8 +93,19 @@ public enum GlobalStorageStatistics {
   }
 
   /**
+   * Reset all global storage statistics.
+   */
+  public synchronized void reset() {
+    for (StorageStatistics statistics : map.values()) {
+      statistics.reset();
+    }
+  }
+
+  /**
    * Get an iterator that we can use to iterate throw all the global storage
    * statistics objects.
+   *
+   * @return StorageStatistics Iterator.
    */
   synchronized public Iterator<StorageStatistics> iterator() {
     Entry<String, StorageStatistics> first = map.firstEntry();

@@ -20,16 +20,18 @@ package org.apache.hadoop.fs;
 
 import java.io.*;
 import java.util.*;
-
-import org.apache.commons.logging.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.hadoop.util.*;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.util.DiskChecker.DiskErrorException;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
-import org.apache.hadoop.conf.Configuration; 
+import org.apache.hadoop.conf.Configuration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import static org.apache.hadoop.net.NetUtils.getHostname;
 
 /** An implementation of a round-robin scheme for disk allocation for creating
  * files. The way it works is that it is kept track what disk was last
@@ -65,7 +67,10 @@ import org.apache.hadoop.conf.Configuration;
 @InterfaceAudience.LimitedPrivate({"HDFS", "MapReduce"})
 @InterfaceStability.Unstable
 public class LocalDirAllocator {
-  
+
+  static final String E_NO_SPACE_AVAILABLE =
+      "No space available in any of the local directories";
+
   //A Map from the config item names like "mapred.local.dir"
   //to the instance of the AllocatorPerContext. This
   //is a static object to make sure there exists exactly one instance per JVM
@@ -76,11 +81,26 @@ public class LocalDirAllocator {
   /** Used when size of file to be allocated is unknown. */
   public static final int SIZE_UNKNOWN = -1;
 
-  /**Create an allocator object
-   * @param contextCfgItemName
+  private final DiskValidator diskValidator;
+
+  /**
+   * Create an allocator object.
+   * @param contextCfgItemName contextCfgItemName.
    */
   public LocalDirAllocator(String contextCfgItemName) {
     this.contextCfgItemName = contextCfgItemName;
+    try {
+      this.diskValidator = DiskValidatorFactory.getInstance(
+              BasicDiskValidator.NAME);
+    } catch (DiskErrorException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  public LocalDirAllocator(String contextCfgItemName,
+          DiskValidator diskValidator) {
+    this.contextCfgItemName = contextCfgItemName;
+    this.diskValidator = diskValidator;
   }
   
   /** This method must be used to obtain the dir allocation context for a 
@@ -94,7 +114,8 @@ public class LocalDirAllocator {
       AllocatorPerContext l = contexts.get(contextCfgItemName);
       if (l == null) {
         contexts.put(contextCfgItemName, 
-                    (l = new AllocatorPerContext(contextCfgItemName)));
+                    (l = new AllocatorPerContext(contextCfgItemName,
+                            diskValidator)));
       }
       return l;
     }
@@ -108,7 +129,7 @@ public class LocalDirAllocator {
    *  available disk)
    *  @param conf the Configuration object
    *  @return the complete path to the file on a local disk
-   *  @throws IOException
+   *  @throws IOException raised on errors performing I/O.
    */
   public Path getLocalPathForWrite(String pathStr, 
       Configuration conf) throws IOException {
@@ -124,7 +145,7 @@ public class LocalDirAllocator {
    *  @param size the size of the file that is going to be written
    *  @param conf the Configuration object
    *  @return the complete path to the file on a local disk
-   *  @throws IOException
+   *  @throws IOException raised on errors performing I/O.
    */
   public Path getLocalPathForWrite(String pathStr, long size, 
       Configuration conf) throws IOException {
@@ -141,7 +162,7 @@ public class LocalDirAllocator {
    *  @param conf the Configuration object
    *  @param checkWrite ensure that the path is writable
    *  @return the complete path to the file on a local disk
-   *  @throws IOException
+   *  @throws IOException raised on errors performing I/O.
    */
   public Path getLocalPathForWrite(String pathStr, long size, 
                                    Configuration conf,
@@ -156,7 +177,7 @@ public class LocalDirAllocator {
    *  @param pathStr the requested file (this will be searched)
    *  @param conf the Configuration object
    *  @return the complete path to the file on a local disk
-   *  @throws IOException
+   *  @throws IOException raised on errors performing I/O.
    */
   public Path getLocalPathToRead(String pathStr, 
       Configuration conf) throws IOException {
@@ -169,7 +190,7 @@ public class LocalDirAllocator {
    * @param pathStr the path underneath the roots
    * @param conf the configuration to look up the roots in
    * @return all of the paths that exist under any of the roots
-   * @throws IOException
+   * @throws IOException raised on errors performing I/O.
    */
   public Iterable<Path> getAllLocalPathsToRead(String pathStr, 
                                                Configuration conf
@@ -190,7 +211,7 @@ public class LocalDirAllocator {
    *  @param size the size of the file that is going to be written
    *  @param conf the Configuration object
    *  @return a unique temporary file
-   *  @throws IOException
+   *  @throws IOException raised on errors performing I/O.
    */
   public File createTmpFileForWrite(String pathStr, long size, 
       Configuration conf) throws IOException {
@@ -198,8 +219,9 @@ public class LocalDirAllocator {
     return context.createTmpFileForWrite(pathStr, size, conf);
   }
   
-  /** Method to check whether a context is valid
-   * @param contextCfgItemName
+  /**
+   * Method to check whether a context is valid.
+   * @param contextCfgItemName contextCfgItemName.
    * @return true/false
    */
   public static boolean isContextValid(String contextCfgItemName) {
@@ -209,9 +231,9 @@ public class LocalDirAllocator {
   }
   
   /**
-   * Removes the context from the context config items
+   * Removes the context from the context config items.
    * 
-   * @param contextCfgItemName
+   * @param contextCfgItemName contextCfgItemName.
    */
   @Deprecated
   @InterfaceAudience.LimitedPrivate({"MapReduce"})
@@ -221,14 +243,14 @@ public class LocalDirAllocator {
     }
   }
     
-  /** We search through all the configured dirs for the file's existence
-   *  and return true when we find  
+  /**
+   *  We search through all the configured dirs for the file's existence
+   *  and return true when we find.
    *  @param pathStr the requested file (this will be searched)
    *  @param conf the Configuration object
    *  @return true if files exist. false otherwise
-   *  @throws IOException
    */
-  public boolean ifExists(String pathStr,Configuration conf) {
+  public boolean ifExists(String pathStr, Configuration conf) {
     AllocatorPerContext context = obtainContext(contextCfgItemName);
     return context.ifExists(pathStr, conf);
   }
@@ -244,82 +266,112 @@ public class LocalDirAllocator {
   
   private static class AllocatorPerContext {
 
-    private final Log LOG =
-      LogFactory.getLog(AllocatorPerContext.class);
+    private static final Logger LOG =
+        LoggerFactory.getLogger(AllocatorPerContext.class);
 
-    private int dirNumLastAccessed;
     private Random dirIndexRandomizer = new Random();
-    private FileSystem localFS;
-    private DF[] dirDF = new DF[0];
     private String contextCfgItemName;
-    private String[] localDirs = new String[0];
-    private String savedLocalDirs = "";
 
-    public AllocatorPerContext(String contextCfgItemName) {
+    // NOTE: the context must be accessed via a local reference as it
+    //       may be updated at any time to reference a different context
+    private AtomicReference<Context> currentContext;
+    private final DiskValidator diskValidator;
+
+    private static class Context {
+      private AtomicInteger dirNumLastAccessed = new AtomicInteger(0);
+      private FileSystem localFS;
+      private DF[] dirDF;
+      private Path[] localDirs;
+      private String savedLocalDirs;
+
+      public int getAndIncrDirNumLastAccessed() {
+        return getAndIncrDirNumLastAccessed(1);
+      }
+
+      public int getAndIncrDirNumLastAccessed(int delta) {
+        if (localDirs.length < 2 || delta == 0) {
+          return dirNumLastAccessed.get();
+        }
+        int oldval, newval;
+        do {
+          oldval = dirNumLastAccessed.get();
+          newval = (oldval + delta) % localDirs.length;
+        } while (!dirNumLastAccessed.compareAndSet(oldval, newval));
+        return oldval;
+      }
+    }
+
+    public AllocatorPerContext(String contextCfgItemName,
+            DiskValidator diskValidator) {
       this.contextCfgItemName = contextCfgItemName;
+      this.currentContext = new AtomicReference<Context>(new Context());
+      this.diskValidator = diskValidator;
     }
 
     /** This method gets called everytime before any read/write to make sure
      * that any change to localDirs is reflected immediately.
      */
-    private synchronized void confChanged(Configuration conf) 
+    private Context confChanged(Configuration conf)
         throws IOException {
+      Context ctx = currentContext.get();
       String newLocalDirs = conf.get(contextCfgItemName);
       if (null == newLocalDirs) {
         throw new IOException(contextCfgItemName + " not configured");
       }
-      if (!newLocalDirs.equals(savedLocalDirs)) {
-        localDirs = StringUtils.getTrimmedStrings(newLocalDirs);
-        localFS = FileSystem.getLocal(conf);
-        int numDirs = localDirs.length;
-        ArrayList<String> dirs = new ArrayList<String>(numDirs);
+      if (!newLocalDirs.equals(ctx.savedLocalDirs)) {
+        ctx = new Context();
+        String[] dirStrings = StringUtils.getTrimmedStrings(newLocalDirs);
+        ctx.localFS = FileSystem.getLocal(conf);
+        int numDirs = dirStrings.length;
+        ArrayList<Path> dirs = new ArrayList<Path>(numDirs);
         ArrayList<DF> dfList = new ArrayList<DF>(numDirs);
         for (int i = 0; i < numDirs; i++) {
           try {
             // filter problematic directories
-            Path tmpDir = new Path(localDirs[i]);
-            if(localFS.mkdirs(tmpDir)|| localFS.exists(tmpDir)) {
+            Path tmpDir = new Path(dirStrings[i]);
+            if(ctx.localFS.mkdirs(tmpDir)|| ctx.localFS.exists(tmpDir)) {
               try {
-
                 File tmpFile = tmpDir.isAbsolute()
-                  ? new File(localFS.makeQualified(tmpDir).toUri())
-                  : new File(localDirs[i]);
+                    ? new File(ctx.localFS.makeQualified(tmpDir).toUri())
+                    : new File(dirStrings[i]);
 
-                DiskChecker.checkDir(tmpFile);
-                dirs.add(tmpFile.getPath());
+                diskValidator.checkStatus(tmpFile);
+                dirs.add(new Path(tmpFile.getPath()));
                 dfList.add(new DF(tmpFile, 30000));
-
               } catch (DiskErrorException de) {
-                LOG.warn( localDirs[i] + " is not writable\n", de);
+                LOG.warn(dirStrings[i] + " is not writable\n", de);
               }
             } else {
-              LOG.warn( "Failed to create " + localDirs[i]);
+              LOG.warn("Failed to create " + dirStrings[i]);
             }
           } catch (IOException ie) { 
-            LOG.warn( "Failed to create " + localDirs[i] + ": " +
+            LOG.warn("Failed to create " + dirStrings[i] + ": " +
                 ie.getMessage() + "\n", ie);
           } //ignore
         }
-        localDirs = dirs.toArray(new String[dirs.size()]);
-        dirDF = dfList.toArray(new DF[dirs.size()]);
-        savedLocalDirs = newLocalDirs;
-        
+        ctx.localDirs = dirs.toArray(new Path[dirs.size()]);
+        ctx.dirDF = dfList.toArray(new DF[dirs.size()]);
+        ctx.savedLocalDirs = newLocalDirs;
+
         if (dirs.size() > 0) {
           // randomize the first disk picked in the round-robin selection
-          dirNumLastAccessed = dirIndexRandomizer.nextInt(dirs.size());
+          ctx.dirNumLastAccessed.set(dirIndexRandomizer.nextInt(dirs.size()));
         }
+
+        currentContext.set(ctx);
       }
+
+      return ctx;
     }
 
-    private Path createPath(String path, 
+    private Path createPath(Path dir, String path,
         boolean checkWrite) throws IOException {
-      Path file = new Path(new Path(localDirs[dirNumLastAccessed]),
-                                    path);
+      Path file = new Path(dir, path);
       if (checkWrite) {
         //check whether we are able to create a directory here. If the disk
         //happens to be RDONLY we will fail
         try {
-          DiskChecker.checkDir(new File(file.getParent().toUri().getPath()));
+          diskValidator.checkStatus(new File(file.getParent().toUri().getPath()));
           return file;
         } catch (DiskErrorException d) {
           LOG.warn("Disk Error Exception: ", d);
@@ -334,7 +386,25 @@ public class LocalDirAllocator {
      * @return the current directory index.
      */
     int getCurrentDirectoryIndex() {
-      return dirNumLastAccessed;
+      return currentContext.get().dirNumLastAccessed.get();
+    }
+
+    /**
+     * Format a string, log at debug and append it to the history as a new line.
+     *
+     * @param history history to fill in
+     * @param fmt format string
+     * @param args varags
+     */
+    private void note(StringBuilder history, String fmt, Object... args) {
+      try {
+        final String s = String.format(fmt, args);
+        history.append(s).append("\n");
+        LOG.debug(s);
+      } catch (Exception e) {
+        // some resilience in case the format string is wrong
+        LOG.debug(fmt, e);
+      }
     }
 
     /** Get a path from the local FS. If size is known, we go
@@ -344,31 +414,83 @@ public class LocalDirAllocator {
      *  If size is not known, use roulette selection -- pick directories
      *  with probability proportional to their available space.
      */
-    public synchronized Path getLocalPathForWrite(String pathStr, long size, 
+    public Path getLocalPathForWrite(String pathStr, long size,
         Configuration conf, boolean checkWrite) throws IOException {
-      confChanged(conf);
-      int numDirs = localDirs.length;
+
+      // history is built up and logged at error if the alloc
+      StringBuilder history = new StringBuilder();
+
+      note(history, "Searching for a directory for file \"%s\", size = %,d; checkWrite=%s",
+          pathStr, size, checkWrite);
+      Context ctx = confChanged(conf);
+      int numDirs = ctx.localDirs.length;
       int numDirsSearched = 0;
+      // Max capacity in any directory
+      long maxCapacity = 0;
+      String errorText = null;
+      IOException diskException = null;
       //remove the leading slash from the path (to make sure that the uri
       //resolution results in a valid path on the dir being checked)
       if (pathStr.startsWith("/")) {
         pathStr = pathStr.substring(1);
       }
       Path returnPath = null;
-      
-      if(size == SIZE_UNKNOWN) {  //do roulette selection: pick dir with probability 
-                    //proportional to available size
-        long[] availableOnDisk = new long[dirDF.length];
-        long totalAvailable = 0;
-        
-            //build the "roulette wheel"
-        for(int i =0; i < dirDF.length; ++i) {
-          availableOnDisk[i] = dirDF[i].getAvailable();
-          totalAvailable += availableOnDisk[i];
+
+      final int dirCount = ctx.dirDF.length;
+      long[] availableOnDisk = new long[dirCount];
+      long totalAvailable = 0;
+
+      StringBuilder pathNames = new StringBuilder();
+
+      //build the "roulette wheel"
+      for (int i =0; i < dirCount; ++i) {
+        final DF target = ctx.dirDF[i];
+        // attempt to recreate the dir so that getAvailable() is valid
+        // if it fails, getAvailable() will return 0, so the dir will
+        // be declared unavailable.
+        // return value is logged at debug to keep spotbugs quiet.
+        final String name = target.getDirPath();
+        pathNames.append(" ").append(name);
+        final File dirPath = new File(name);
+
+        // existence probe with directory recreation
+        if (!dirPath.exists()) {
+          LOG.debug("Creating buffer dir {}", name);
+          if (dirPath.mkdirs()) {
+            note(history, "Created buffer dir %s", name);
+          } else {
+            note(history, "Failed to create buffer dir %s", name);
+          }
         }
 
-        if (totalAvailable == 0){
-          throw new DiskErrorException("No space available in any of the local directories.");
+        // path already existed or the mkdir call had an outcome
+        // make sure the path is present and a dir, and if so add its availability
+        if (dirPath.isDirectory()) {
+          final long available = target.getAvailable();
+          availableOnDisk[i] = available;
+          note(history, "%,d bytes available under path %s",  available, name);
+          totalAvailable += availableOnDisk[i];
+        } else {
+          note(history, "%s does not exist/is not a directory", name);
+        }
+      }
+
+      note(history, "Directory count is %d; total available capacity is %,d",
+          dirCount, totalAvailable);
+
+      if (size == SIZE_UNKNOWN) {
+        //do roulette selection: pick dir with probability
+        // proportional to available size
+        note(history, "Size not specified, so picking directories at random.");
+
+        if (totalAvailable == 0) {
+          // log error and history
+          String newErrorText = E_NO_SPACE_AVAILABLE + pathNames
+              + " on host" + getHostname();
+          LOG.error(newErrorText);
+          LOG.error(history.toString());
+          // then raise the exception
+          throw new DiskErrorException(newErrorText);
         }
 
         // Keep rolling the wheel till we get a valid path
@@ -380,32 +502,74 @@ public class LocalDirAllocator {
             randomPosition -= availableOnDisk[dir];
             dir++;
           }
-          dirNumLastAccessed = dir;
-          returnPath = createPath(pathStr, checkWrite);
+          ctx.dirNumLastAccessed.set(dir);
+          final Path localDir = ctx.localDirs[dir];
+          returnPath = createPath(localDir, pathStr, checkWrite);
           if (returnPath == null) {
             totalAvailable -= availableOnDisk[dir];
             availableOnDisk[dir] = 0; // skip this disk
             numDirsSearched++;
+            note(history, "No capacity in %s", localDir);
+          } else {
+            note(history, "Allocated file %s in %s", returnPath, localDir);
           }
         }
       } else {
-        while (numDirsSearched < numDirs && returnPath == null) {
-          long capacity = dirDF[dirNumLastAccessed].getAvailable();
-          if (capacity > size) {
-            returnPath = createPath(pathStr, checkWrite);
+        note(history, "Requested file size is %,d; searching for a suitable directory",
+            size);
+        // Start linear search with random increment if possible
+        int randomInc = 1;
+        if (numDirs > 2) {
+          randomInc += dirIndexRandomizer.nextInt(numDirs - 1);
+        }
+        int dirNum = ctx.getAndIncrDirNumLastAccessed(randomInc);
+        while (numDirsSearched < numDirs) {
+          long capacity = ctx.dirDF[dirNum].getAvailable();
+          if (capacity > maxCapacity) {
+            maxCapacity = capacity;
           }
-          dirNumLastAccessed++;
-          dirNumLastAccessed = dirNumLastAccessed % numDirs; 
+          if (capacity > size) {
+            final Path localDir = ctx.localDirs[dirNum];
+            try {
+              returnPath = createPath(localDir, pathStr, checkWrite);
+            } catch (IOException e) {
+              errorText = e.getMessage();
+              diskException = e;
+              note(history, "Exception while creating path %s: %s", localDir, errorText);
+              LOG.debug("DiskException caught for dir {}", localDir, e);
+            }
+            if (returnPath != null) {
+              // success
+              ctx.getAndIncrDirNumLastAccessed(numDirsSearched);
+              note(history, "Allocated file %s in %s", returnPath, localDir);
+              break;
+            } else {
+              note(history, "No capacity in %s", localDir);
+            }
+          }
+          dirNum++;
+          dirNum = dirNum % numDirs;
           numDirsSearched++;
-        } 
+        }
       }
       if (returnPath != null) {
         return returnPath;
       }
       
       //no path found
-      throw new DiskErrorException("Could not find any valid local " +
-          "directory for " + pathStr);
+      String hostname = getHostname();
+      String newErrorText = "Could not find any valid local directory for "
+          + pathStr + " with requested size " + size
+          + " on host " + hostname
+          + " as the max capacity in any directory"
+          + " (" + pathNames + " )"
+          + " is " + maxCapacity;
+      if (errorText != null) {
+        newErrorText = newErrorText + " due to " + errorText;
+      }
+      LOG.error(newErrorText);
+      LOG.error(history.toString());
+      throw new DiskErrorException(newErrorText, diskException);
     }
 
     /** Creates a file on the local FS. Pass size as 
@@ -432,10 +596,10 @@ public class LocalDirAllocator {
      *  configured dirs for the file's existence and return the complete
      *  path to the file when we find one 
      */
-    public synchronized Path getLocalPathToRead(String pathStr, 
+    public Path getLocalPathToRead(String pathStr,
         Configuration conf) throws IOException {
-      confChanged(conf);
-      int numDirs = localDirs.length;
+      Context ctx = confChanged(conf);
+      int numDirs = ctx.localDirs.length;
       int numDirsSearched = 0;
       //remove the leading slash from the path (to make sure that the uri
       //resolution results in a valid path on the dir being checked)
@@ -443,8 +607,8 @@ public class LocalDirAllocator {
         pathStr = pathStr.substring(1);
       }
       while (numDirsSearched < numDirs) {
-        Path file = new Path(localDirs[numDirsSearched], pathStr);
-        if (localFS.exists(file)) {
+        Path file = new Path(ctx.localDirs[numDirsSearched], pathStr);
+        if (ctx.localFS.exists(file)) {
           return file;
         }
         numDirsSearched++;
@@ -459,10 +623,10 @@ public class LocalDirAllocator {
       private final FileSystem fs;
       private final String pathStr;
       private int i = 0;
-      private final String[] rootDirs;
+      private final Path[] rootDirs;
       private Path next = null;
 
-      private PathIterator(FileSystem fs, String pathStr, String[] rootDirs)
+      private PathIterator(FileSystem fs, String pathStr, Path[] rootDirs)
           throws IOException {
         this.fs = fs;
         this.pathStr = pathStr;
@@ -491,7 +655,7 @@ public class LocalDirAllocator {
         try {
           advance();
         } catch (IOException ie) {
-          throw new RuntimeException("Can't check existance of " + next, ie);
+          throw new RuntimeException("Can't check existence of " + next, ie);
         }
         if (result == null) {
           throw new NoSuchElementException();
@@ -517,21 +681,22 @@ public class LocalDirAllocator {
      * @return all of the paths that exist under any of the roots
      * @throws IOException
      */
-    synchronized Iterable<Path> getAllLocalPathsToRead(String pathStr,
+    Iterable<Path> getAllLocalPathsToRead(String pathStr,
         Configuration conf) throws IOException {
-      confChanged(conf);
+      Context ctx = confChanged(conf);
       if (pathStr.startsWith("/")) {
         pathStr = pathStr.substring(1);
       }
-      return new PathIterator(localFS, pathStr, localDirs);
+      return new PathIterator(ctx.localFS, pathStr, ctx.localDirs);
     }
 
     /** We search through all the configured dirs for the file's existence
      *  and return true when we find one 
      */
-    public synchronized boolean ifExists(String pathStr,Configuration conf) {
+    public boolean ifExists(String pathStr, Configuration conf) {
+      Context ctx = currentContext.get();
       try {
-        int numDirs = localDirs.length;
+        int numDirs = ctx.localDirs.length;
         int numDirsSearched = 0;
         //remove the leading slash from the path (to make sure that the uri
         //resolution results in a valid path on the dir being checked)
@@ -539,8 +704,8 @@ public class LocalDirAllocator {
           pathStr = pathStr.substring(1);
         }
         while (numDirsSearched < numDirs) {
-          Path file = new Path(localDirs[numDirsSearched], pathStr);
-          if (localFS.exists(file)) {
+          Path file = new Path(ctx.localDirs[numDirsSearched], pathStr);
+          if (ctx.localFS.exists(file)) {
             return true;
           }
           numDirsSearched++;

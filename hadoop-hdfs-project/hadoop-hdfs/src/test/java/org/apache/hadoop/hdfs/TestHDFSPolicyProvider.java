@@ -17,29 +17,28 @@
  */
 package org.apache.hadoop.hdfs;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
-import org.apache.commons.lang.ClassUtils;
-import org.apache.hadoop.hdfs.protocol.ReconfigurationProtocol;
+import org.apache.commons.lang3.ClassUtils;
 import org.apache.hadoop.hdfs.qjournal.server.JournalNodeRpcServer;
 import org.apache.hadoop.hdfs.server.namenode.NameNodeRpcServer;
 import org.apache.hadoop.hdfs.server.datanode.DataNode;
 import org.apache.hadoop.security.authorize.Service;
+import org.apache.hadoop.test.TestName;
+import org.apache.hadoop.util.Sets;
 
-import org.junit.BeforeClass;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TestName;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-import org.junit.runners.Parameterized.Parameters;
+import org.junit.jupiter.api.BeforeAll;
 
+import org.junit.jupiter.api.extension.RegisterExtension;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -51,13 +50,12 @@ import org.slf4j.LoggerFactory;
  * HDFSPolicyProvider.  This is a parameterized test repeated for multiple HDFS
  * RPC server classes.
  */
-@RunWith(Parameterized.class)
 public class TestHDFSPolicyProvider {
 
   private static final Logger LOG =
       LoggerFactory.getLogger(TestHDFSPolicyProvider.class);
 
-  private static List<Class<?>> policyProviderProtocols;
+  private static Set<Class<?>> policyProviderProtocols;
 
   private static final Comparator<Class<?>> CLASS_NAME_COMPARATOR =
       new Comparator<Class<?>>() {
@@ -67,26 +65,25 @@ public class TestHDFSPolicyProvider {
         }
       };
 
-  @Rule
-  public TestName testName = new TestName();
+  @RegisterExtension
+  private TestName methodName = new TestName();
 
-  private final Class<?> rpcServerClass;
+  private Class<?> rpcServerClass;
 
-  @BeforeClass
+  @BeforeAll
   public static void initialize() {
     Service[] services = new HDFSPolicyProvider().getServices();
-    policyProviderProtocols = new ArrayList<>(services.length);
+    policyProviderProtocols = new HashSet<>(services.length);
     for (Service service : services) {
       policyProviderProtocols.add(service.getProtocol());
     }
-    Collections.sort(policyProviderProtocols, CLASS_NAME_COMPARATOR);
   }
 
-  public TestHDFSPolicyProvider(Class<?> rpcServerClass) {
-    this.rpcServerClass = rpcServerClass;
+  public void initTestHDFSPolicyProvider(Class<?> pRpcServerClass) {
+    this.rpcServerClass = pRpcServerClass;
+    initialize();
   }
 
-  @Parameters(name = "protocolsForServer-{0}")
   public static List<Class<?>[]> data() {
     return Arrays.asList(new Class<?>[][]{
         {NameNodeRpcServer.class},
@@ -95,32 +92,29 @@ public class TestHDFSPolicyProvider {
     });
   }
 
-  @Test
-  public void testPolicyProviderForServer() {
+  @ParameterizedTest(name = "protocolsForServer-{0}")
+  @MethodSource("data")
+  public void testPolicyProviderForServer(Class<?> pRpcServerClass) {
+    initTestHDFSPolicyProvider(pRpcServerClass);
     List<?> ifaces = ClassUtils.getAllInterfaces(rpcServerClass);
-    List<Class<?>> serverProtocols = new ArrayList<>(ifaces.size());
+    Set<Class<?>> serverProtocols = new HashSet<>(ifaces.size());
     for (Object obj : ifaces) {
       Class<?> iface = (Class<?>)obj;
-      // ReconfigurationProtocol is not covered in HDFSPolicyProvider
-      // currently, so we have a special case to skip it.  This needs follow-up
-      // investigation.
-      if (iface.getSimpleName().endsWith("Protocol") &&
-          iface != ReconfigurationProtocol.class) {
+      if (iface.getSimpleName().endsWith("Protocol")) {
         serverProtocols.add(iface);
       }
     }
-    Collections.sort(serverProtocols, CLASS_NAME_COMPARATOR);
     LOG.info("Running test {} for RPC server {}.  Found server protocols {} "
-        + "and policy provider protocols {}.", testName.getMethodName(),
+        + "and policy provider protocols {}.", methodName.getMethodName(),
         rpcServerClass.getName(), serverProtocols, policyProviderProtocols);
-    assertFalse("Expected to find at least one protocol in server.",
-        serverProtocols.isEmpty());
-    assertTrue(
-        String.format("Expected all protocols for server %s to be defined in "
-            + "%s.  Server contains protocols %s.  Policy provider contains "
-            + "protocols %s.", rpcServerClass.getName(),
-            HDFSPolicyProvider.class.getName(), serverProtocols,
-            policyProviderProtocols),
-        policyProviderProtocols.containsAll(serverProtocols));
+    assertFalse(serverProtocols.isEmpty(),
+        "Expected to find at least one protocol in server.");
+    final Set<Class<?>> differenceSet =
+        Sets.difference(serverProtocols, policyProviderProtocols);
+    assertTrue(differenceSet.isEmpty(),
+        String.format("Following protocols for server %s are not defined in "
+                + "%s: %s",
+            rpcServerClass.getName(), HDFSPolicyProvider.class.getName(),
+            Arrays.toString(differenceSet.toArray())));
   }
 }

@@ -18,13 +18,16 @@
 
 package org.apache.hadoop.mapreduce.jobhistory;
 
-import org.apache.hadoop.classification.InterfaceAudience;
-import org.apache.hadoop.classification.InterfaceStability;
-import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
-import org.apache.hadoop.yarn.api.records.ContainerId;
-import org.apache.hadoop.yarn.util.ConverterUtils;
+import java.util.Set;
 
 import org.apache.avro.util.Utf8;
+import org.apache.hadoop.classification.InterfaceAudience;
+import org.apache.hadoop.classification.InterfaceStability;
+import org.apache.hadoop.util.StringUtils;
+import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
+import org.apache.hadoop.yarn.api.records.ContainerId;
+import org.apache.hadoop.yarn.api.records.timelineservice.TimelineEvent;
+import org.apache.hadoop.yarn.api.records.timelineservice.TimelineMetric;
 
 /**
  * Event to record start of a task attempt
@@ -107,8 +110,8 @@ public class AMStartedEvent implements HistoryEvent {
    * @return the ApplicationAttemptId
    */
   public ApplicationAttemptId getAppAttemptId() {
-    return ConverterUtils.toApplicationAttemptId(datum.getApplicationAttemptId()
-        .toString());
+    return ApplicationAttemptId.fromString(
+        datum.getApplicationAttemptId().toString());
   }
 
   /**
@@ -122,7 +125,7 @@ public class AMStartedEvent implements HistoryEvent {
    * @return the ContainerId for the MRAppMaster.
    */
   public ContainerId getContainerId() {
-    return ConverterUtils.toContainerId(datum.getContainerId().toString());
+    return ContainerId.fromString(datum.getContainerId().toString());
   }
 
   /**
@@ -165,5 +168,25 @@ public class AMStartedEvent implements HistoryEvent {
   @Override
   public EventType getEventType() {
     return EventType.AM_STARTED;
+  }
+
+  @Override
+  public TimelineEvent toTimelineEvent() {
+    TimelineEvent tEvent = new TimelineEvent();
+    tEvent.setId(StringUtils.toUpperCase(getEventType().name()));
+    tEvent.addInfo("APPLICATION_ATTEMPT_ID",
+        getAppAttemptId() == null ? "" : getAppAttemptId().toString());
+    tEvent.addInfo("CONTAINER_ID", getContainerId() == null ?
+        "" : getContainerId().toString());
+    tEvent.addInfo("NODE_MANAGER_HOST", getNodeManagerHost());
+    tEvent.addInfo("NODE_MANAGER_PORT", getNodeManagerPort());
+    tEvent.addInfo("NODE_MANAGER_HTTP_PORT", getNodeManagerHttpPort());
+    tEvent.addInfo("START_TIME", getStartTime());
+    return tEvent;
+  }
+
+  @Override
+  public Set<TimelineMetric> getTimelineMetrics() {
+    return null;
   }
 }

@@ -22,26 +22,26 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.tools.CommandShell;
 import org.apache.hadoop.util.ToolRunner;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *  DtUtilShell is a set of command line token file management operations.
  */
 public class DtUtilShell extends CommandShell {
-  private static final Log LOG = LogFactory.getLog(DtUtilShell.class);
+  private static final Logger LOG = LoggerFactory.getLogger(DtUtilShell.class);
 
   private static final String FORMAT_SUBSTRING = "[-format (" +
       DtFileOperations.FORMAT_JAVA + "|" +
       DtFileOperations.FORMAT_PB + ")]";
   public static final String DT_USAGE = "hadoop dtutil " +
       "[-keytab <keytab_file> -principal <principal_name>] " +
-      "subcommand (help|print|get|append|cancel|remove|renew) " +
+      "subcommand (help|print|get|edit|append|cancel|remove|renew) " +
          FORMAT_SUBSTRING + " [-alias <alias>] filename...";
 
   // command line options
@@ -50,10 +50,12 @@ public class DtUtilShell extends CommandShell {
   private static final String PRINCIPAL = "-principal";
   private static final String PRINT = "print";
   private static final String GET = "get";
+  private static final String EDIT = "edit";
   private static final String APPEND = "append";
   private static final String CANCEL = "cancel";
   private static final String REMOVE = "remove";
   private static final String RENEW = "renew";
+  private static final String IMPORT = "import";
   private static final String RENEWER = "-renewer";
   private static final String SERVICE = "-service";
   private static final String ALIAS = "-alias";
@@ -107,9 +109,9 @@ public class DtUtilShell extends CommandShell {
    * Parse the command line arguments and initialize subcommand.
    * Also will attempt to perform Kerberos login if both -principal and -keytab
    * flags are passed in args array.
-   * @param args
+   * @param args args.
    * @return 0 if the argument(s) were recognized, 1 otherwise
-   * @throws Exception
+   * @throws Exception Exception.
    */
   @Override
   protected int init(String[] args) throws Exception {
@@ -127,6 +129,8 @@ public class DtUtilShell extends CommandShell {
           setSubCommand(new Print());
         } else if (command.equals(GET)) {
           setSubCommand(new Get(args[++i]));
+        } else if (command.equals(EDIT)) {
+          setSubCommand(new Edit());
         } else if (command.equals(APPEND)) {
           setSubCommand(new Append());
         } else if (command.equals(CANCEL)) {
@@ -135,6 +139,8 @@ public class DtUtilShell extends CommandShell {
           setSubCommand(new Remove(false));
         } else if (command.equals(RENEW)) {
           setSubCommand(new Renew());
+        } else if (command.equals(IMPORT)) {
+          setSubCommand(new Import(args[++i]));
         }
       } else if (args[i].equals(ALIAS)) {
         alias = new Text(args[++i]);
@@ -172,10 +178,12 @@ public class DtUtilShell extends CommandShell {
 
   @Override
   public String getCommandUsage() {
-    return String.format("%n%s%n   %s%n   %s%n   %s%n   %s%n   %s%n   %s%n%n",
-                  DT_USAGE, (new Print()).getUsage(), (new Get()).getUsage(),
-                  (new Append()).getUsage(), (new Remove(true)).getUsage(),
-                  (new Remove(false)).getUsage(), (new Renew()).getUsage());
+    return String.format(
+        "%n%s%n   %s%n   %s%n   %s%n   %s%n   %s%n   %s%n   %s%n   %s%n%n",
+        DT_USAGE, (new Print()).getUsage(), (new Get()).getUsage(),
+        (new Edit()).getUsage(), (new Append()).getUsage(),
+        (new Remove(true)).getUsage(), (new Remove(false)).getUsage(),
+        (new Renew()).getUsage(), (new Import()).getUsage());
   }
 
   private class Print extends SubCommand {
@@ -239,6 +247,38 @@ public class DtUtilShell extends CommandShell {
     @Override
     public String getUsage() {
       return GET_USAGE;
+    }
+  }
+
+  private class Edit extends SubCommand {
+    public static final String EDIT_USAGE =
+        "dtutil edit -service <service> -alias <alias> " +
+        FORMAT_SUBSTRING + "filename...";
+
+    @Override
+    public boolean validate() {
+      if (service == null) {
+        LOG.error("must pass -service field with dtutil edit command");
+        return false;
+      }
+      if (alias == null) {
+        LOG.error("must pass -alias field with dtutil edit command");
+        return false;
+      }
+      return true;
+    }
+
+    @Override
+    public void execute() throws Exception {
+      for (File tokenFile : tokenFiles) {
+        DtFileOperations.aliasTokenFile(
+            tokenFile, format, alias, service, getConf());
+      }
+    }
+
+    @Override
+    public String getUsage() {
+      return EDIT_USAGE;
     }
   }
 
@@ -317,6 +357,36 @@ public class DtUtilShell extends CommandShell {
     @Override
     public String getUsage() {
       return RENEW_USAGE;
+    }
+  }
+
+  private class Import extends SubCommand {
+    public static final String IMPORT_USAGE =
+        "dtutil import <base64> [-alias <alias>] " +
+        FORMAT_SUBSTRING + " filename";
+
+    private String base64 = null;
+
+    Import() { }
+
+    Import(String arg) {
+      base64 = arg;
+    }
+
+    @Override
+    public boolean validate() {
+      return true;
+    }
+
+    @Override
+    public void execute() throws Exception {
+      DtFileOperations.importTokenFile(
+          firstFile, format, alias, base64, getConf());
+    }
+
+    @Override
+    public String getUsage() {
+      return IMPORT_USAGE;
     }
   }
 

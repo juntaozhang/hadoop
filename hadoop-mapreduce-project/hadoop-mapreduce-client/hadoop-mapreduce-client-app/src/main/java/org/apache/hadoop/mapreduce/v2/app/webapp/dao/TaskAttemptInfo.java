@@ -17,8 +17,6 @@
  */
 package org.apache.hadoop.mapreduce.v2.app.webapp.dao;
 
-import java.util.List;
-
 import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
 import javax.xml.bind.annotation.XmlRootElement;
@@ -31,13 +29,12 @@ import org.apache.hadoop.mapreduce.v2.api.records.TaskType;
 import org.apache.hadoop.mapreduce.v2.app.job.TaskAttempt;
 import org.apache.hadoop.mapreduce.v2.util.MRApps;
 import org.apache.hadoop.yarn.api.records.ContainerId;
-import org.apache.hadoop.yarn.util.ConverterUtils;
 import org.apache.hadoop.yarn.util.Times;
 
 @XmlRootElement(name = "taskAttempt")
-@XmlSeeAlso({ ReduceTaskAttemptInfo.class })
+@XmlSeeAlso({MapTaskAttemptInfo.class, ReduceTaskAttemptInfo.class})
 @XmlAccessorType(XmlAccessType.FIELD)
-public class TaskAttemptInfo {
+public abstract class TaskAttemptInfo {
 
   protected long startTime;
   protected long finishTime;
@@ -58,10 +55,6 @@ public class TaskAttemptInfo {
   public TaskAttemptInfo() {
   }
 
-  public TaskAttemptInfo(TaskAttempt ta, Boolean isRunning) {
-    this(ta, TaskType.MAP, isRunning);
-  }
-
   public TaskAttemptInfo(TaskAttempt ta, TaskType type, Boolean isRunning) {
     final TaskAttemptReport report = ta.getReport();
     this.type = type.toString();
@@ -69,8 +62,10 @@ public class TaskAttemptInfo {
     this.nodeHttpAddress = ta.getNodeHttpAddress();
     this.startTime = report.getStartTime();
     this.finishTime = report.getFinishTime();
-    this.assignedContainerId = ConverterUtils.toString(report.getContainerId());
     this.assignedContainer = report.getContainerId();
+    if (assignedContainer != null) {
+      this.assignedContainerId = assignedContainer.toString();
+    }
     this.progress = report.getProgress() * 100;
     this.status = report.getStateString();
     this.state = report.getTaskAttemptState();
@@ -130,5 +125,4 @@ public class TaskAttemptInfo {
   public String getNote() {
     return this.diagnostics;
   }
-
 }

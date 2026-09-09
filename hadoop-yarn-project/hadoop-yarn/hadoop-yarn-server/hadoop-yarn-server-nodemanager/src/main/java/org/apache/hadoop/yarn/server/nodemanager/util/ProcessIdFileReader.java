@@ -22,19 +22,22 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.util.Shell;
-import org.apache.hadoop.yarn.util.ConverterUtils;
+import org.apache.hadoop.yarn.api.records.ContainerId;
 
 /**
  * Helper functionality to read the pid from a file.
  */
 public class ProcessIdFileReader {
 
-  private static final Log LOG = LogFactory.getLog(ProcessIdFileReader.class);
+  private static final Logger LOG =
+       LoggerFactory.getLogger(ProcessIdFileReader.class);
   
   /**
    * Get the process id from specified file path.
@@ -47,8 +50,7 @@ public class ProcessIdFileReader {
     if (path == null) {
       throw new IOException("Trying to access process id from a null path");
     }
-    
-    LOG.debug("Accessing pid from pid file " + path);
+    LOG.debug("Accessing pid from pid file {}", path);
     String processId = null;
     BufferedReader bufReader = null;
 
@@ -56,7 +58,7 @@ public class ProcessIdFileReader {
       File file = new File(path.toString());
       if (file.exists()) {
         FileInputStream fis = new FileInputStream(file);
-        bufReader = new BufferedReader(new InputStreamReader(fis, "UTF-8"));
+        bufReader = new BufferedReader(new InputStreamReader(fis, StandardCharsets.UTF_8));
 
         while (true) {
           String line = bufReader.readLine();
@@ -69,7 +71,7 @@ public class ProcessIdFileReader {
               // On Windows, pid is expected to be a container ID, so find first
               // line that parses successfully as a container ID.
               try {
-                ConverterUtils.toContainerId(temp);
+                ContainerId.fromString(temp);
                 processId = temp;
                 break;
               } catch (Exception e) {
@@ -96,9 +98,8 @@ public class ProcessIdFileReader {
         bufReader.close();
       }
     }
-    LOG.debug("Got pid " 
-        + (processId != null? processId : "null")  
-        + " from path " + path);
+    LOG.debug("Got pid {} from path {}",
+        (processId != null ? processId : "null"), path);
     return processId;
   }
 

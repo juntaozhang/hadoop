@@ -25,7 +25,6 @@ import org.apache.hadoop.yarn.api.records.LocalResource;
 import org.apache.hadoop.yarn.api.records.LocalResourceType;
 import org.apache.hadoop.yarn.api.records.LocalResourceVisibility;
 import org.apache.hadoop.yarn.api.records.URL;
-import org.apache.hadoop.yarn.util.ConverterUtils;
 
 public class LocalResourceRequest
     extends LocalResource implements Comparable<LocalResourceRequest> {
@@ -43,7 +42,7 @@ public class LocalResourceRequest
    */
   public LocalResourceRequest(LocalResource resource)
       throws URISyntaxException {
-    this(ConverterUtils.getPathFromYarnURL(resource.getResource()),
+    this(resource.getResource().toPath(),
         resource.getTimestamp(),
         resource.getType(),
         resource.getVisibility(),
@@ -133,7 +132,7 @@ public class LocalResourceRequest
 
   @Override
   public URL getResource() {
-    return ConverterUtils.getYarnUrlFromPath(loc);
+    return URL.fromPath(loc);
   }
 
   @Override

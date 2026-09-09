@@ -18,12 +18,12 @@
 package org.apache.hadoop.nfs.nfs3.request;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 
-import org.apache.commons.io.Charsets;
 import org.apache.hadoop.nfs.nfs3.FileHandle;
 import org.apache.hadoop.oncrpc.XDR;
 
-import com.google.common.annotations.VisibleForTesting;
+import org.apache.hadoop.classification.VisibleForTesting;
 
 /**
  * LOOKUP3 Request
@@ -54,7 +54,7 @@ public class LOOKUP3Request extends RequestWithHandle {
   @VisibleForTesting
   public void serialize(XDR xdr) {
     handle.serialize(xdr);
-    xdr.writeInt(name.getBytes(Charsets.UTF_8).length);
-    xdr.writeFixedOpaque(name.getBytes(Charsets.UTF_8));
+    xdr.writeInt(name.getBytes(StandardCharsets.UTF_8).length);
+    xdr.writeFixedOpaque(name.getBytes(StandardCharsets.UTF_8));
   }
 }

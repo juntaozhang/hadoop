@@ -17,27 +17,7 @@
  */
 package org.apache.hadoop.hdfs.server.datanode.web.webhdfs;
 
-import static io.netty.handler.codec.http.HttpHeaderNames.ACCESS_CONTROL_ALLOW_METHODS;
-import static io.netty.handler.codec.http.HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN;
-import static io.netty.handler.codec.http.HttpHeaderNames.CONNECTION;
-import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_LENGTH;
-import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
-import static io.netty.handler.codec.http.HttpHeaderNames.LOCATION;
-import static io.netty.handler.codec.http.HttpHeaderValues.CLOSE;
-import static io.netty.handler.codec.http.HttpHeaderNames.ACCEPT;
-import static io.netty.handler.codec.http.HttpHeaderNames.ACCESS_CONTROL_ALLOW_HEADERS;
-import static io.netty.handler.codec.http.HttpHeaderNames.ACCESS_CONTROL_MAX_AGE;
-import static io.netty.handler.codec.http.HttpHeaderValues.KEEP_ALIVE;
-import static io.netty.handler.codec.http.HttpMethod.GET;
-import static io.netty.handler.codec.http.HttpMethod.OPTIONS;
-import static io.netty.handler.codec.http.HttpMethod.POST;
-import static io.netty.handler.codec.http.HttpMethod.PUT;
-import static io.netty.handler.codec.http.HttpResponseStatus.CONTINUE;
-import static io.netty.handler.codec.http.HttpResponseStatus.CREATED;
-import static io.netty.handler.codec.http.HttpResponseStatus.OK;
-import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
-import static org.apache.hadoop.hdfs.protocol.HdfsConstants.HDFS_URI_SCHEME;
-import static org.apache.hadoop.hdfs.security.token.delegation.DelegationTokenIdentifier.HDFS_DELEGATION_KIND;
+import org.apache.hadoop.util.Preconditions;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
@@ -49,39 +29,65 @@ import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.QueryStringDecoder;
 import io.netty.handler.stream.ChunkedStream;
-
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.security.PrivilegedExceptionAction;
-import java.util.EnumSet;
-
-import org.apache.commons.io.Charsets;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.CreateFlag;
 import org.apache.hadoop.fs.MD5MD5CRC32FileChecksum;
+import org.apache.hadoop.fs.permission.FsCreateModes;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hdfs.DFSClient;
+import org.apache.hadoop.hdfs.client.HdfsClientConfigKeys;
 import org.apache.hadoop.hdfs.client.HdfsDataInputStream;
 import org.apache.hadoop.hdfs.security.token.delegation.DelegationTokenIdentifier;
 import org.apache.hadoop.hdfs.web.JsonUtil;
 import org.apache.hadoop.hdfs.web.WebHdfsFileSystem;
+import org.apache.hadoop.hdfs.web.resources.AclPermissionParam;
 import org.apache.hadoop.hdfs.web.resources.GetOpParam;
 import org.apache.hadoop.hdfs.web.resources.PostOpParam;
 import org.apache.hadoop.hdfs.web.resources.PutOpParam;
+import org.apache.hadoop.hdfs.web.resources.UserParam;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.util.LimitInputStream;
 
-import com.google.common.base.Preconditions;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.security.PrivilegedExceptionAction;
+import java.util.EnumSet;
+
+import static io.netty.handler.codec.http.HttpHeaderNames.ACCEPT;
+import static io.netty.handler.codec.http.HttpHeaderNames.ACCESS_CONTROL_ALLOW_HEADERS;
+import static io.netty.handler.codec.http.HttpHeaderNames.ACCESS_CONTROL_ALLOW_METHODS;
+import static io.netty.handler.codec.http.HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN;
+import static io.netty.handler.codec.http.HttpHeaderNames.ACCESS_CONTROL_MAX_AGE;
+import static io.netty.handler.codec.http.HttpHeaderNames.CONNECTION;
+import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_LENGTH;
+import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
+import static io.netty.handler.codec.http.HttpHeaderNames.LOCATION;
+import static io.netty.handler.codec.http.HttpHeaderValues.CLOSE;
+import static io.netty.handler.codec.http.HttpHeaderValues.KEEP_ALIVE;
+import static io.netty.handler.codec.http.HttpMethod.GET;
+import static io.netty.handler.codec.http.HttpMethod.OPTIONS;
+import static io.netty.handler.codec.http.HttpMethod.POST;
+import static io.netty.handler.codec.http.HttpMethod.PUT;
+import static io.netty.handler.codec.http.HttpResponseStatus.CONTINUE;
+import static io.netty.handler.codec.http.HttpResponseStatus.CREATED;
+import static io.netty.handler.codec.http.HttpResponseStatus.INTERNAL_SERVER_ERROR;
+import static io.netty.handler.codec.http.HttpResponseStatus.OK;
+import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
+import static org.apache.hadoop.hdfs.protocol.HdfsConstants.HDFS_URI_SCHEME;
+import static org.apache.hadoop.hdfs.security.token.delegation.DelegationTokenIdentifier.HDFS_DELEGATION_KIND;
 
 public class WebHdfsHandler extends SimpleChannelInboundHandler<HttpRequest> {
-  static final Log LOG = LogFactory.getLog(WebHdfsHandler.class);
+  static final Logger LOG = LoggerFactory.getLogger(WebHdfsHandler.class);
+  static final Logger REQLOG = LoggerFactory.getLogger("datanode.webhdfs");
   public static final String WEBHDFS_PREFIX = WebHdfsFileSystem.PATH_PREFIX;
   public static final int WEBHDFS_PREFIX_LENGTH = WEBHDFS_PREFIX.length();
   public static final String APPLICATION_OCTET_STREAM =
@@ -98,11 +104,19 @@ public class WebHdfsHandler extends SimpleChannelInboundHandler<HttpRequest> {
   private String path;
   private ParameterParser params;
   private UserGroupInformation ugi;
+  private DefaultHttpResponse resp = null;
 
   public WebHdfsHandler(Configuration conf, Configuration confForCreate)
     throws IOException {
     this.conf = conf;
     this.confForCreate = confForCreate;
+    /** set user pattern based on configuration file */
+    UserParam.setUserPattern(
+        conf.get(HdfsClientConfigKeys.DFS_WEBHDFS_USER_PATTERN_KEY,
+            HdfsClientConfigKeys.DFS_WEBHDFS_USER_PATTERN_DEFAULT));
+    AclPermissionParam.setAclPermissionPattern(
+        conf.get(HdfsClientConfigKeys.DFS_WEBHDFS_ACL_PERMISSION_PATTERN_KEY,
+            HdfsClientConfigKeys.DFS_WEBHDFS_ACL_PERMISSION_PATTERN_DEFAULT));
   }
 
   @Override
@@ -119,10 +133,28 @@ public class WebHdfsHandler extends SimpleChannelInboundHandler<HttpRequest> {
     ugi.doAs(new PrivilegedExceptionAction<Void>() {
       @Override
       public Void run() throws Exception {
-        handle(ctx, req);
+        try {
+          handle(ctx, req);
+        } finally {
+          String host = null;
+          try {
+            host = ((InetSocketAddress)ctx.channel().remoteAddress()).
+                getAddress().getHostAddress();
+          } catch (Exception e) {
+            LOG.warn("Error retrieving hostname: ", e);
+            host = "unknown";
+          }
+          REQLOG.info(host + " " + req.method() + " "  + req.uri() + " " +
+              getResponseCode());
+        }
         return null;
       }
     });
+  }
+
+  int getResponseCode() {
+    return (resp == null) ? INTERNAL_SERVER_ERROR.code() :
+        resp.status().code();
   }
 
   public void handle(ChannelHandlerContext ctx, HttpRequest req)
@@ -152,7 +184,7 @@ public class WebHdfsHandler extends SimpleChannelInboundHandler<HttpRequest> {
   @Override
   public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
     LOG.debug("Error ", cause);
-    DefaultHttpResponse resp = ExceptionHandler.exceptionCaught(cause);
+    resp = ExceptionHandler.exceptionCaught(cause);
     resp.headers().set(CONNECTION, CLOSE);
     ctx.writeAndFlush(resp).addListener(ChannelFutureListener.CLOSE);
   }
@@ -165,7 +197,10 @@ public class WebHdfsHandler extends SimpleChannelInboundHandler<HttpRequest> {
     final int bufferSize = params.bufferSize();
     final short replication = params.replication();
     final long blockSize = params.blockSize();
-    final FsPermission permission = params.permission();
+    final FsPermission unmaskedPermission = params.unmaskedPermission();
+    final FsPermission permission = unmaskedPermission == null ?
+        params.permission() :
+        FsCreateModes.create(params.permission(), unmaskedPermission);
     final boolean createParent = params.createParent();
 
     EnumSet<CreateFlag> flags = params.createFlag();
@@ -184,7 +219,7 @@ public class WebHdfsHandler extends SimpleChannelInboundHandler<HttpRequest> {
         path, permission, flags, createParent, replication, blockSize, null,
         bufferSize, null), null);
 
-    DefaultHttpResponse resp = new DefaultHttpResponse(HTTP_1_1, CREATED);
+    resp = new DefaultHttpResponse(HTTP_1_1, CREATED);
 
     final URI uri = new URI(HDFS_URI_SCHEME, nnId, path, null, null);
     resp.headers().set(LOCATION, uri.toString());
@@ -203,7 +238,7 @@ public class WebHdfsHandler extends SimpleChannelInboundHandler<HttpRequest> {
     DFSClient dfsClient = newDfsClient(nnId, conf);
     OutputStream out = dfsClient.append(path, bufferSize,
         EnumSet.of(CreateFlag.APPEND), null, null);
-    DefaultHttpResponse resp = new DefaultHttpResponse(HTTP_1_1, OK);
+    resp = new DefaultHttpResponse(HTTP_1_1, OK);
     resp.headers().set(CONTENT_LENGTH, 0);
     ctx.pipeline().replace(this, HdfsWriter.class.getSimpleName(),
       new HdfsWriter(dfsClient, out, resp));
@@ -215,8 +250,8 @@ public class WebHdfsHandler extends SimpleChannelInboundHandler<HttpRequest> {
     final long offset = params.offset();
     final long length = params.length();
 
-    DefaultHttpResponse response = new DefaultHttpResponse(HTTP_1_1, OK);
-    HttpHeaders headers = response.headers();
+    resp = new DefaultHttpResponse(HTTP_1_1, OK);
+    HttpHeaders headers = resp.headers();
     // Allow the UI to access the file
     headers.set(ACCESS_CONTROL_ALLOW_METHODS, GET);
     headers.set(ACCESS_CONTROL_ALLOW_ORIGIN, "*");
@@ -240,7 +275,7 @@ public class WebHdfsHandler extends SimpleChannelInboundHandler<HttpRequest> {
       data = in;
     }
 
-    ctx.write(response);
+    ctx.write(resp);
     ctx.writeAndFlush(new ChunkedStream(data) {
       @Override
       public void close() throws Exception {
@@ -259,10 +294,11 @@ public class WebHdfsHandler extends SimpleChannelInboundHandler<HttpRequest> {
       dfsclient.close();
       dfsclient = null;
     } finally {
-      IOUtils.cleanup(LOG, dfsclient);
+      IOUtils.cleanupWithLogger(LOG, dfsclient);
     }
-    final byte[] js = JsonUtil.toJsonString(checksum).getBytes(Charsets.UTF_8);
-    DefaultFullHttpResponse resp =
+    final byte[] js =
+        JsonUtil.toJsonString(checksum).getBytes(StandardCharsets.UTF_8);
+    resp =
       new DefaultFullHttpResponse(HTTP_1_1, OK, Unpooled.wrappedBuffer(js));
 
     resp.headers().set(CONTENT_TYPE, APPLICATION_JSON_UTF8);
@@ -274,8 +310,8 @@ public class WebHdfsHandler extends SimpleChannelInboundHandler<HttpRequest> {
   //Accept preflighted CORS requests
   private void allowCORSOnCreate(ChannelHandlerContext ctx)
     throws IOException, URISyntaxException {
-    DefaultHttpResponse response = new DefaultHttpResponse(HTTP_1_1, OK);
-    HttpHeaders headers = response.headers();
+    resp = new DefaultHttpResponse(HTTP_1_1, OK);
+    HttpHeaders headers = resp.headers();
     headers.set(ACCESS_CONTROL_ALLOW_ORIGIN, "*");
     headers.set(ACCESS_CONTROL_ALLOW_HEADERS, ACCEPT);
     headers.set(ACCESS_CONTROL_ALLOW_METHODS, PUT);
@@ -283,7 +319,7 @@ public class WebHdfsHandler extends SimpleChannelInboundHandler<HttpRequest> {
     headers.set(CONTENT_LENGTH, 0);
     headers.set(CONNECTION, KEEP_ALIVE);
 
-    ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
+    ctx.writeAndFlush(resp).addListener(ChannelFutureListener.CLOSE);
   }
 
   private static void writeContinueHeader(ChannelHandlerContext ctx) {
@@ -299,8 +335,8 @@ public class WebHdfsHandler extends SimpleChannelInboundHandler<HttpRequest> {
   }
 
   private void injectToken() throws IOException {
-    if (UserGroupInformation.isSecurityEnabled()) {
-      Token<DelegationTokenIdentifier> token = params.delegationToken();
+    Token<DelegationTokenIdentifier> token = params.delegationToken();
+    if (UserGroupInformation.isSecurityEnabled() && token != null) {
       token.setKind(HDFS_DELEGATION_KIND);
       ugi.addToken(token);
     }

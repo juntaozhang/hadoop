@@ -18,16 +18,19 @@
 
 package org.apache.hadoop.mapreduce;
 
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
-
 import java.io.IOException;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.UnsupportedFileSystemException;
 import org.apache.hadoop.mapred.LocalJobRunner;
 import org.apache.hadoop.mapred.YARNRunner;
 import org.apache.hadoop.mapreduce.server.jobtracker.JTConfig;
-import org.junit.Test;
+import org.apache.hadoop.util.StringUtils;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public class TestClientProtocolProviderImpls {
 
@@ -74,6 +77,23 @@ public class TestClientProtocolProviderImpls {
     } catch (IOException e) {
       assertTrue(e.getMessage().contains(
           "Cannot initialize Cluster. Please check"));
+    }
+  }
+
+  @Test
+  public void testClusterExceptionRootCause() throws Exception {
+    final Configuration conf = new Configuration();
+    conf.set(MRConfig.FRAMEWORK_NAME, MRConfig.YARN_FRAMEWORK_NAME);
+    conf.set(FileSystem.FS_DEFAULT_NAME_KEY, "nosuchfs:///");
+    conf.set(JTConfig.JT_IPC_ADDRESS, "local");
+    try {
+      new Cluster(conf);
+      fail("Cluster init should fail because of non-existing FileSystem");
+    } catch (IOException ioEx) {
+      final String stackTrace = StringUtils.stringifyException(ioEx);
+      assertTrue(stackTrace.contains(
+          UnsupportedFileSystemException.class.getName()) && stackTrace.contains("nosuchfs"),
+          "No root cause detected");
     }
   }
 }

@@ -21,7 +21,7 @@ package org.apache.hadoop.hdfs.protocol;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 
-@InterfaceAudience.Private
+@InterfaceAudience.Public
 @InterfaceStability.Evolving
 
 /**
@@ -87,8 +87,10 @@ public abstract class FSLimitException extends QuotaExceededException {
       super(msg);
     }
     
-    public MaxDirectoryItemsExceededException(long quota, long count) {
+    public MaxDirectoryItemsExceededException(String path, long quota,
+        long count) {
       super(quota, count);
+      setPathName(path);
     }
 
     @Override

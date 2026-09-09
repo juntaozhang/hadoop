@@ -20,6 +20,7 @@ package org.apache.hadoop.fs;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 
+import org.apache.hadoop.util.Preconditions;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.fs.FileSystem.Statistics.StatisticsData;
@@ -45,7 +46,9 @@ public class FileSystemStorageStatistics extends StorageStatistics {
       "bytesReadLocalHost",
       "bytesReadDistanceOfOneOrTwo",
       "bytesReadDistanceOfThreeOrFour",
-      "bytesReadDistanceOfFiveOrLarger"
+      "bytesReadDistanceOfFiveOrLarger",
+      "bytesReadErasureCoded",
+      "remoteReadTimeMS"
   };
 
   private static class LongStatisticIterator
@@ -81,13 +84,16 @@ public class FileSystemStorageStatistics extends StorageStatistics {
   }
 
   private static Long fetch(StatisticsData data, String key) {
+    Preconditions.checkArgument(key != null,
+        "The stat key of FileSystemStorageStatistics should not be null!");
+
     switch (key) {
     case "bytesRead":
       return data.getBytesRead();
     case "bytesWritten":
       return data.getBytesWritten();
     case "readOps":
-      return Long.valueOf(data.getReadOps());
+      return (long) (data.getReadOps() + data.getLargeReadOps());
     case "largeReadOps":
       return Long.valueOf(data.getLargeReadOps());
     case "writeOps":
@@ -100,6 +106,10 @@ public class FileSystemStorageStatistics extends StorageStatistics {
       return data.getBytesReadDistanceOfThreeOrFour();
     case "bytesReadDistanceOfFiveOrLarger":
       return data.getBytesReadDistanceOfFiveOrLarger();
+    case "bytesReadErasureCoded":
+      return data.getBytesReadErasureCoded();
+    case "remoteReadTimeMS":
+      return data.getRemoteReadTimeMS();
     default:
       return null;
     }
@@ -107,7 +117,16 @@ public class FileSystemStorageStatistics extends StorageStatistics {
 
   FileSystemStorageStatistics(String name, FileSystem.Statistics stats) {
     super(name);
+    Preconditions.checkArgument(stats != null,
+        "FileSystem.Statistics can not be null");
+    Preconditions.checkArgument(stats.getData() != null,
+        "FileSystem.Statistics can not have null data");
     this.stats = stats;
+  }
+
+  @Override
+  public String getScheme() {
+    return stats.getScheme();
   }
 
   @Override
@@ -125,6 +144,7 @@ public class FileSystemStorageStatistics extends StorageStatistics {
    *
    * @return         True only if the statistic is being tracked.
    */
+  @Override
   public boolean isTracked(String key) {
     for (String k: KEYS) {
       if (k.equals(key)) {
@@ -132,5 +152,10 @@ public class FileSystemStorageStatistics extends StorageStatistics {
       }
     }
     return false;
+  }
+
+  @Override
+  public void reset() {
+    stats.reset();
   }
 }

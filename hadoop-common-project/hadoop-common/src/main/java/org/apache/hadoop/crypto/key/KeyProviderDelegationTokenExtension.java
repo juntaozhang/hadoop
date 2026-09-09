@@ -17,8 +17,12 @@
  */
 package org.apache.hadoop.crypto.key;
 
+import org.apache.hadoop.classification.VisibleForTesting;
+import org.apache.hadoop.classification.InterfaceAudience;
+import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.security.Credentials;
 import org.apache.hadoop.security.token.Token;
+import org.apache.hadoop.security.token.DelegationTokenIssuer;
 
 import java.io.IOException;
 
@@ -28,29 +32,38 @@ import java.io.IOException;
  */
 public class KeyProviderDelegationTokenExtension extends
     KeyProviderExtension
-    <KeyProviderDelegationTokenExtension.DelegationTokenExtension> {
+    <KeyProviderDelegationTokenExtension.DelegationTokenExtension>
+    implements DelegationTokenIssuer {
   
   private static DelegationTokenExtension DEFAULT_EXTENSION = 
       new DefaultDelegationTokenExtension();
 
   /**
-   * DelegationTokenExtension is a type of Extension that exposes methods to 
+   * DelegationTokenExtension is a type of Extension that exposes methods
    * needed to work with Delegation Tokens.
-   */  
-  public interface DelegationTokenExtension extends 
-    KeyProviderExtension.Extension {
-    
+   */
+  public interface DelegationTokenExtension
+      extends KeyProviderExtension.Extension, DelegationTokenIssuer {
     /**
-     * The implementer of this class will take a renewer and add all
-     * delegation tokens associated with the renewer to the 
-     * <code>Credentials</code> object if it is not already present, 
-     * @param renewer the user allowed to renew the delegation tokens
-     * @param credentials cache in which to add new delegation tokens
-     * @return list of new delegation tokens
-     * @throws IOException thrown if IOException if an IO error occurs.
+     * Renews the given token.
+     * @param token The token to be renewed.
+     * @return The token's lifetime after renewal, or 0 if it can't be renewed.
+     * @throws IOException raised on errors performing I/O.
      */
-    public Token<?>[] addDelegationTokens(final String renewer, 
-        Credentials credentials) throws IOException;
+    long renewDelegationToken(final Token<?> token) throws IOException;
+
+    /**
+     * Cancels the given token.
+     * @param token The token to be cancelled.
+     * @throws IOException raised on errors performing I/O.
+     */
+    Void cancelDelegationToken(final Token<?> token) throws IOException;
+
+    // Do NOT call this. Only intended for internal use.
+    @VisibleForTesting
+    @InterfaceAudience.Private
+    @InterfaceStability.Unstable
+    Token<?> selectDelegationToken(Credentials creds);
   }
   
   /**
@@ -65,31 +78,53 @@ public class KeyProviderDelegationTokenExtension extends
         Credentials credentials) {
       return null;
     }
-    
+
+    @Override
+    public String getCanonicalServiceName() {
+      return null;
+    }
+
+    @Override
+    public Token<?> getDelegationToken(String renewer) {
+      return null;
+    }
+
+    @Override
+    public long renewDelegationToken(final Token<?> token) throws IOException {
+      return 0;
+    }
+
+    @Override
+    public Void cancelDelegationToken(final Token<?> token) throws IOException {
+      return null;
+    }
+
+    @Override
+    public Token<?> selectDelegationToken(Credentials creds) {
+      return null;
+    }
+
   }
 
   private KeyProviderDelegationTokenExtension(KeyProvider keyProvider,
       DelegationTokenExtension extensions) {
     super(keyProvider, extensions);
   }
-  
-  /**
-   * Passes the renewer and Credentials object to the underlying 
-   * {@link DelegationTokenExtension} 
-   * @param renewer the user allowed to renew the delegation tokens
-   * @param credentials cache in which to add new delegation tokens
-   * @return list of new delegation tokens
-   * @throws IOException thrown if IOException if an IO error occurs.
-   */
-  public Token<?>[] addDelegationTokens(final String renewer, 
-      Credentials credentials) throws IOException {
-    return getExtension().addDelegationTokens(renewer, credentials);
+
+  @Override
+  public String getCanonicalServiceName() {
+    return getExtension().getCanonicalServiceName();
   }
-  
+
+  @Override
+  public Token<?> getDelegationToken(final String renewer) throws IOException {
+    return getExtension().getDelegationToken(renewer);
+  }
+
   /**
    * Creates a <code>KeyProviderDelegationTokenExtension</code> using a given 
    * {@link KeyProvider}.
-   * <p/>
+   * <p>
    * If the given <code>KeyProvider</code> implements the 
    * {@link DelegationTokenExtension} interface the <code>KeyProvider</code> 
    * itself will provide the extension functionality, otherwise a default 

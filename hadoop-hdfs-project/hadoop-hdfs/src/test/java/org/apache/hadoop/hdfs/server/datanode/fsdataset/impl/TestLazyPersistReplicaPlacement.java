@@ -23,19 +23,20 @@ import org.apache.hadoop.fs.StorageType;
 import org.apache.hadoop.hdfs.protocol.LocatedBlock;
 import org.apache.hadoop.hdfs.protocol.LocatedBlocks;
 import org.apache.hadoop.test.GenericTestUtils;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.util.concurrent.TimeoutException;
 
 import static org.apache.hadoop.fs.StorageType.DEFAULT;
 import static org.apache.hadoop.fs.StorageType.RAM_DISK;
-import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.Assert.fail;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public class TestLazyPersistReplicaPlacement extends LazyPersistTestCase {
   @Test
-  public void testPlacementOnRamDisk() throws IOException {
+  public void testPlacementOnRamDisk()
+      throws IOException, TimeoutException, InterruptedException {
     getClusterBuilder().build();
     final String METHOD_NAME = GenericTestUtils.getMethodName();
     Path path = new Path("/" + METHOD_NAME + ".dat");
@@ -45,7 +46,8 @@ public class TestLazyPersistReplicaPlacement extends LazyPersistTestCase {
   }
 
   @Test
-  public void testPlacementOnSizeLimitedRamDisk() throws IOException {
+  public void testPlacementOnSizeLimitedRamDisk()
+      throws IOException, TimeoutException, InterruptedException {
     getClusterBuilder().setRamDiskReplicaCapacity(3).build();
     final String METHOD_NAME = GenericTestUtils.getMethodName();
     Path path1 = new Path("/" + METHOD_NAME + ".01.dat");
@@ -64,7 +66,8 @@ public class TestLazyPersistReplicaPlacement extends LazyPersistTestCase {
    * @throws IOException
    */
   @Test
-  public void testFallbackToDisk() throws IOException {
+  public void testFallbackToDisk()
+      throws IOException, TimeoutException, InterruptedException {
     getClusterBuilder().setHasTransientStorage(false).build();
     final String METHOD_NAME = GenericTestUtils.getMethodName();
     Path path = new Path("/" + METHOD_NAME + ".dat");
@@ -115,7 +118,7 @@ public class TestLazyPersistReplicaPlacement extends LazyPersistTestCase {
    */
   @Test
   public void testFallbackToDiskPartial()
-      throws IOException, InterruptedException {
+      throws IOException, InterruptedException, TimeoutException {
     getClusterBuilder().setMaxLockedMemory(2 * BLOCK_SIZE).build();
     final String METHOD_NAME = GenericTestUtils.getMethodName();
     Path path = new Path("/" + METHOD_NAME + ".dat");
@@ -143,8 +146,8 @@ public class TestLazyPersistReplicaPlacement extends LazyPersistTestCase {
 
     // Since eviction is asynchronous, depending on the timing of eviction
     // wrt writes, we may get 2 or less blocks on RAM disk.
-    assertThat(numBlocksOnRamDisk, is(2));
-    assertThat(numBlocksOnDisk, is(3));
+    assertThat(numBlocksOnRamDisk).isEqualTo(2);
+    assertThat(numBlocksOnDisk).isEqualTo(3);
   }
 
   /**

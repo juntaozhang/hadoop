@@ -19,7 +19,9 @@ package org.apache.hadoop.security.token.delegation.web;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
+import org.apache.hadoop.net.NetUtils;
 import org.apache.hadoop.security.SecurityUtil;
+import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.authentication.client.AuthenticatedURL;
 import org.apache.hadoop.security.authentication.client.AuthenticationException;
 import org.apache.hadoop.security.authentication.client.Authenticator;
@@ -27,8 +29,8 @@ import org.apache.hadoop.security.authentication.client.ConnectionConfigurator;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.security.token.delegation.AbstractDelegationTokenIdentifier;
 import org.apache.hadoop.util.HttpExceptionUtils;
+import org.apache.hadoop.util.JsonSerialization;
 import org.apache.hadoop.util.StringUtils;
-import org.codehaus.jackson.map.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -57,6 +59,7 @@ public abstract class DelegationTokenAuthenticator implements Authenticator {
   private static final String HTTP_PUT = "PUT";
 
   public static final String OP_PARAM = "op";
+  private static final String OP_PARAM_EQUALS = OP_PARAM + "=";
 
   public static final String DELEGATION_TOKEN_HEADER =
       "X-Hadoop-Delegation-Token";
@@ -64,6 +67,7 @@ public abstract class DelegationTokenAuthenticator implements Authenticator {
   public static final String DELEGATION_PARAM = "delegation";
   public static final String TOKEN_PARAM = "token";
   public static final String RENEWER_PARAM = "renewer";
+  public static final String SERVICE_PARAM = "service";
   public static final String DELEGATION_TOKEN_JSON = "Token";
   public static final String DELEGATION_TOKEN_URL_STRING_JSON = "urlString";
   public static final String RENEW_DELEGATION_TOKEN_JSON = "long";
@@ -72,7 +76,7 @@ public abstract class DelegationTokenAuthenticator implements Authenticator {
    * DelegationToken operations.
    */
   @InterfaceAudience.Private
-  public static enum DelegationTokenOperation {
+  public enum DelegationTokenOperation {
     GETDELEGATIONTOKEN(HTTP_GET, true),
     RENEWDELEGATIONTOKEN(HTTP_PUT, true),
     CANCELDELEGATIONTOKEN(HTTP_PUT, false);
@@ -113,10 +117,16 @@ public abstract class DelegationTokenAuthenticator implements Authenticator {
     if (token instanceof DelegationTokenAuthenticatedURL.Token) {
       hasDt = ((DelegationTokenAuthenticatedURL.Token) token).
           getDelegationToken() != null;
+      if (hasDt) {
+        LOG.trace("Delegation token found: {}",
+            ((DelegationTokenAuthenticatedURL.Token) token)
+                .getDelegationToken());
+      }
     }
     if (!hasDt) {
       String queryStr = url.getQuery();
       hasDt = (queryStr != null) && queryStr.contains(DELEGATION_PARAM + "=");
+      LOG.trace("hasDt={}, queryStr={}", hasDt, queryStr);
     }
     return hasDt;
   }
@@ -125,7 +135,20 @@ public abstract class DelegationTokenAuthenticator implements Authenticator {
   public void authenticate(URL url, AuthenticatedURL.Token token)
       throws IOException, AuthenticationException {
     if (!hasDelegationToken(url, token)) {
-      authenticator.authenticate(url, token);
+      try {
+        // check and renew TGT to handle potential expiration
+        UserGroupInformation.getCurrentUser().checkTGTAndReloginFromKeytab();
+        LOG.debug("No delegation token found for url={}, "
+            + "authenticating with {}", url, authenticator.getClass());
+        authenticator.authenticate(url, token);
+      } catch (IOException ex) {
+        throw NetUtils.wrapException(url.getHost(), url.getPort(),
+            null, 0, ex);
+      }
+
+    } else {
+      LOG.debug("Authenticated from delegation token. url={}, token={}",
+          url, token);
     }
   }
 
@@ -140,6 +163,7 @@ public abstract class DelegationTokenAuthenticator implements Authenticator {
    * @param renewer the renewer user.
    * @throws IOException if an IO error occurred.
    * @throws AuthenticationException if an authentication exception occurred.
+   * @return abstract delegation token identifier.
    */
   public Token<AbstractDelegationTokenIdentifier> getDelegationToken(URL url,
       AuthenticatedURL.Token token, String renewer)
@@ -159,6 +183,7 @@ public abstract class DelegationTokenAuthenticator implements Authenticator {
    * @param doAsUser the user to do as, which will be the token owner.
    * @throws IOException if an IO error occurred.
    * @throws AuthenticationException if an authentication exception occurred.
+   * @return abstract delegation token identifier.
    */
   public Token<AbstractDelegationTokenIdentifier> getDelegationToken(URL url,
       AuthenticatedURL.Token token, String renewer, String doAsUser)
@@ -184,8 +209,10 @@ public abstract class DelegationTokenAuthenticator implements Authenticator {
    * @param url the URL to renew the delegation token from. Only HTTP/S URLs are
    * supported.
    * @param token the authentication token with the Delegation Token to renew.
+   * @param dToken abstract delegation token identifier.
    * @throws IOException if an IO error occurred.
    * @throws AuthenticationException if an authentication exception occurred.
+   * @return delegation token long value.
    */
   public long renewDelegationToken(URL url,
       AuthenticatedURL.Token token,
@@ -202,8 +229,10 @@ public abstract class DelegationTokenAuthenticator implements Authenticator {
    * supported.
    * @param token the authentication token with the Delegation Token to renew.
    * @param doAsUser the user to do as, which will be the token owner.
+   * @param dToken abstract delegation token identifier.
    * @throws IOException if an IO error occurred.
    * @throws AuthenticationException if an authentication exception occurred.
+   * @return delegation token long value.
    */
   public long renewDelegationToken(URL url,
       AuthenticatedURL.Token token,
@@ -222,6 +251,7 @@ public abstract class DelegationTokenAuthenticator implements Authenticator {
    * @param url the URL to cancel the delegation token from. Only HTTP/S URLs
    * are supported.
    * @param token the authentication token with the Delegation Token to cancel.
+   * @param dToken abstract delegation token identifier.
    * @throws IOException if an IO error occurred.
    */
   public void cancelDelegationToken(URL url,
@@ -238,6 +268,7 @@ public abstract class DelegationTokenAuthenticator implements Authenticator {
    * @param url the URL to cancel the delegation token from. Only HTTP/S URLs
    * are supported.
    * @param token the authentication token with the Delegation Token to cancel.
+   * @param dToken abstract delegation token identifier.
    * @param doAsUser the user to do as, which will be the token owner.
    * @throws IOException if an IO error occurred.
    */
@@ -269,8 +300,7 @@ public abstract class DelegationTokenAuthenticator implements Authenticator {
     }
     // proxyuser
     if (doAsUser != null) {
-      params.put(DelegationTokenAuthenticatedURL.DO_AS,
-          URLEncoder.encode(doAsUser, "UTF-8"));
+      params.put(DelegationTokenAuthenticatedURL.DO_AS, doAsUser);
     }
     String urlStr = url.toExternalForm();
     StringBuilder sb = new StringBuilder(urlStr);
@@ -282,27 +312,44 @@ public abstract class DelegationTokenAuthenticator implements Authenticator {
     }
     url = new URL(sb.toString());
     AuthenticatedURL aUrl = new AuthenticatedURL(this, connConfigurator);
-    HttpURLConnection conn = aUrl.openConnection(url, token);
-    conn.setRequestMethod(operation.getHttpMethod());
-    HttpExceptionUtils.validateResponse(conn, HttpURLConnection.HTTP_OK);
-    if (hasResponse) {
-      String contentType = conn.getHeaderField(CONTENT_TYPE);
-      contentType = (contentType != null) ? StringUtils.toLowerCase(contentType)
-                                          : null;
-      if (contentType != null &&
-          contentType.contains(APPLICATION_JSON_MIME)) {
-        try {
-          ObjectMapper mapper = new ObjectMapper();
-          ret = mapper.readValue(conn.getInputStream(), Map.class);
-        } catch (Exception ex) {
-          throw new AuthenticationException(String.format(
-              "'%s' did not handle the '%s' delegation token operation: %s",
-              url.getAuthority(), operation, ex.getMessage()), ex);
+    org.apache.hadoop.security.token.Token<AbstractDelegationTokenIdentifier>
+        dt = null;
+    if (token instanceof DelegationTokenAuthenticatedURL.Token
+        && operation.requiresKerberosCredentials()) {
+      // Unset delegation token to trigger fall-back authentication.
+      dt = ((DelegationTokenAuthenticatedURL.Token) token).getDelegationToken();
+      ((DelegationTokenAuthenticatedURL.Token) token).setDelegationToken(null);
+    }
+    HttpURLConnection conn = null;
+    try {
+      conn = aUrl.openConnection(url, token);
+      conn.setRequestMethod(operation.getHttpMethod());
+      HttpExceptionUtils.validateResponse(conn, HttpURLConnection.HTTP_OK);
+      if (hasResponse) {
+        String contentType = conn.getHeaderField(CONTENT_TYPE);
+        contentType =
+            (contentType != null) ? StringUtils.toLowerCase(contentType) : null;
+        if (contentType != null &&
+            contentType.contains(APPLICATION_JSON_MIME)) {
+          try {
+            ret = JsonSerialization.mapReader().readValue(conn.getInputStream());
+          } catch (Exception ex) {
+            throw new AuthenticationException(String.format(
+                "'%s' did not handle the '%s' delegation token operation: %s",
+                url.getAuthority(), operation, ex.getMessage()), ex);
+          }
+        } else {
+          throw new AuthenticationException(String.format("'%s' did not " +
+                  "respond with JSON to the '%s' delegation token operation",
+              url.getAuthority(), operation));
         }
-      } else {
-        throw new AuthenticationException(String.format("'%s' did not " +
-                "respond with JSON to the '%s' delegation token operation",
-            url.getAuthority(), operation));
+      }
+    } finally {
+      if (dt != null) {
+        ((DelegationTokenAuthenticatedURL.Token) token).setDelegationToken(dt);
+      }
+      if (conn != null) {
+        conn.disconnect();
       }
     }
     return ret;

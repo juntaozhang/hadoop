@@ -18,8 +18,9 @@
 
 package org.apache.hadoop.yarn.server.resourcemanager.blacklist;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.apache.hadoop.yarn.api.records.ResourceBlacklistRequest;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -39,7 +40,8 @@ public class SimpleBlacklistManager implements BlacklistManager {
   private final Set<String> blacklistNodes = new HashSet<>();
   private static final ArrayList<String> EMPTY_LIST = new ArrayList<>();
 
-  private static final Log LOG = LogFactory.getLog(SimpleBlacklistManager.class);
+  private static final Logger LOG =
+      LoggerFactory.getLogger(SimpleBlacklistManager.class);
 
   public SimpleBlacklistManager(int numberOfNodeManagerHosts,
       double blacklistDisableFailureThreshold) {
@@ -58,25 +60,25 @@ public class SimpleBlacklistManager implements BlacklistManager {
   }
 
   @Override
-  public BlacklistUpdates getBlacklistUpdates() {
-    BlacklistUpdates ret;
+  public ResourceBlacklistRequest getBlacklistUpdates() {
+    ResourceBlacklistRequest ret;
     List<String> blacklist = new ArrayList<>(blacklistNodes);
     final int currentBlacklistSize = blacklist.size();
     final double failureThreshold = this.blacklistDisableFailureThreshold *
         numberOfNodeManagerHosts;
     if (currentBlacklistSize < failureThreshold) {
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("blacklist size " + currentBlacklistSize + " is less than " +
-            "failure threshold ratio " + blacklistDisableFailureThreshold +
-            " out of total usable nodes " + numberOfNodeManagerHosts);
-      }
-      ret = new BlacklistUpdates(blacklist, EMPTY_LIST);
+      LOG.debug("blacklist size {} is less than failure threshold ratio {}"
+          + " out of total usable nodes {}", currentBlacklistSize,
+          blacklistDisableFailureThreshold, numberOfNodeManagerHosts);
+      ret = ResourceBlacklistRequest.newInstance(blacklist, EMPTY_LIST);
     } else {
       LOG.warn("Ignoring Blacklists, blacklist size " + currentBlacklistSize
           + " is more than failure threshold ratio "
           + blacklistDisableFailureThreshold + " out of total usable nodes "
           + numberOfNodeManagerHosts);
-      ret = new BlacklistUpdates(EMPTY_LIST, blacklist);
+      // TODO: After the threshold hits, we will keep sending a long list
+      // every time a new AM is to be scheduled.
+      ret = ResourceBlacklistRequest.newInstance(EMPTY_LIST, blacklist);
     }
     return ret;
   }

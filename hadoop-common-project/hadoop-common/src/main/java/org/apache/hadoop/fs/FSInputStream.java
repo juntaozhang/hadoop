@@ -21,9 +21,12 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 
-import com.google.common.base.Preconditions;
+import org.apache.hadoop.util.Preconditions;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
+import org.apache.hadoop.fs.statistics.IOStatisticsLogging;
+import org.apache.hadoop.fs.statistics.IOStatisticsSource;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -105,7 +108,10 @@ public abstract class FSInputStream extends InputStream
     Preconditions.checkArgument(buffer != null, "Null buffer");
     if (buffer.length - offset < length) {
       throw new IndexOutOfBoundsException(
-          FSExceptionMessages.TOO_MANY_BYTES_FOR_DEST_BUFFER);
+          FSExceptionMessages.TOO_MANY_BYTES_FOR_DEST_BUFFER
+              + ": request length=" + length
+              + ", with offset ="+ offset
+              + "; buffer capacity =" + (buffer.length - offset));
     }
   }
 
@@ -130,5 +136,24 @@ public abstract class FSInputStream extends InputStream
   public void readFully(long position, byte[] buffer)
     throws IOException {
     readFully(position, buffer, 0, buffer.length);
+  }
+
+  /**
+   * toString method returns the superclass toString, but if the subclass
+   * implements {@link IOStatisticsSource} then those statistics are
+   * extracted and included in the output.
+   * That is: statistics of subclasses are automatically reported.
+   * @return a string value.
+   */
+  @Override
+  public String toString() {
+    final StringBuilder sb = new StringBuilder(super.toString());
+    sb.append('{');
+    if (this instanceof IOStatisticsSource) {
+      sb.append(IOStatisticsLogging.ioStatisticsSourceToString(
+          (IOStatisticsSource) this));
+    }
+    sb.append('}');
+    return sb.toString();
   }
 }

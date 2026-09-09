@@ -18,23 +18,68 @@
 
 package org.apache.hadoop.yarn.client.api.impl;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.CommonConfigurationKeysPublic;
 import org.apache.hadoop.net.DNSToSwitchMapping;
+import org.apache.hadoop.yarn.api.records.ExecutionType;
+import org.apache.hadoop.yarn.api.records.ExecutionTypeRequest;
 import org.apache.hadoop.yarn.api.records.Priority;
 import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.api.records.ResourceRequest;
 import org.apache.hadoop.yarn.client.api.AMRMClient;
 import org.apache.hadoop.yarn.client.api.AMRMClient.ContainerRequest;
 import org.apache.hadoop.yarn.client.api.InvalidContainerRequestException;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class TestAMRMClientContainerRequest {
+
+  @Test
+  public void testOpportunisticAndGuaranteedRequests() {
+    AMRMClientImpl<ContainerRequest> client =
+        new AMRMClientImpl<ContainerRequest>();
+
+    Configuration conf = new Configuration();
+    conf.setClass(
+        CommonConfigurationKeysPublic.NET_TOPOLOGY_NODE_SWITCH_MAPPING_IMPL_KEY,
+        MyResolver.class, DNSToSwitchMapping.class);
+    client.init(conf);
+
+    Resource capability = Resource.newInstance(1024, 1);
+    ContainerRequest request =
+        ContainerRequest.newBuilder().capability(capability)
+            .nodes(new String[] { "host1", "host2" })
+            .racks(new String[] { "/rack2" }).priority(Priority.newInstance(1))
+            .build();
+    client.addContainerRequest(request);
+    verifyResourceRequest(client, request, "host1", true);
+    verifyResourceRequest(client, request, "host2", true);
+    verifyResourceRequest(client, request, "/rack1", true);
+    verifyResourceRequest(client, request, "/rack2", true);
+    verifyResourceRequest(client, request, ResourceRequest.ANY, true);
+    ContainerRequest request2 =
+        new ContainerRequest(capability, new String[] {"host1", "host2"},
+            new String[] {"/rack2"}, Priority.newInstance(1), 0, true, null,
+            ExecutionTypeRequest.newInstance(
+                ExecutionType.OPPORTUNISTIC, true));
+    client.addContainerRequest(request2);
+    verifyResourceRequest(client, request, "host1", true,
+        ExecutionType.OPPORTUNISTIC);
+    verifyResourceRequest(client, request, "host2", true,
+        ExecutionType.OPPORTUNISTIC);
+    verifyResourceRequest(client, request, "/rack1", true,
+        ExecutionType.OPPORTUNISTIC);
+    verifyResourceRequest(client, request, "/rack2", true,
+        ExecutionType.OPPORTUNISTIC);
+    verifyResourceRequest(client, request, ResourceRequest.ANY, true,
+        ExecutionType.OPPORTUNISTIC);
+  }
+
   @Test
   public void testFillInRacks() {
     AMRMClientImpl<ContainerRequest> client =
@@ -125,25 +170,26 @@ public class TestAMRMClientContainerRequest {
     client.addContainerRequest(bothLevelRequest2);
   }
   
-  @Test (expected = InvalidContainerRequestException.class)
+  @Test
   public void testDifferentLocalityRelaxationSamePriority() {
-    AMRMClientImpl<ContainerRequest> client =
-        new AMRMClientImpl<ContainerRequest>();
-    Configuration conf = new Configuration();
-    conf.setClass(
-        CommonConfigurationKeysPublic.NET_TOPOLOGY_NODE_SWITCH_MAPPING_IMPL_KEY,
-        MyResolver.class, DNSToSwitchMapping.class);
-    client.init(conf);
-    
-    Resource capability = Resource.newInstance(1024, 1);
-    ContainerRequest request1 =
-        new ContainerRequest(capability, new String[] {"host1", "host2"},
-            null, Priority.newInstance(1), false);
-    client.addContainerRequest(request1);
-    ContainerRequest request2 =
-        new ContainerRequest(capability, new String[] {"host3"},
-            null, Priority.newInstance(1), true);
-    client.addContainerRequest(request2);
+    assertThrows(InvalidContainerRequestException.class, ()->{
+      AMRMClientImpl<ContainerRequest> client = new AMRMClientImpl<ContainerRequest>();
+      Configuration conf = new Configuration();
+      conf.setClass(
+          CommonConfigurationKeysPublic.NET_TOPOLOGY_NODE_SWITCH_MAPPING_IMPL_KEY,
+          MyResolver.class, DNSToSwitchMapping.class);
+      client.init(conf);
+
+      Resource capability = Resource.newInstance(1024, 1);
+      ContainerRequest request1 =
+          new ContainerRequest(capability, new String[] {"host1", "host2"},
+          null, Priority.newInstance(1), false);
+      client.addContainerRequest(request1);
+      ContainerRequest request2 =
+          new ContainerRequest(capability, new String[] {"host3"},
+          null, Priority.newInstance(1), true);
+      client.addContainerRequest(request2);
+    });
   }
   
   @Test
@@ -185,32 +231,33 @@ public class TestAMRMClientContainerRequest {
 
   }
   
-  @Test (expected = InvalidContainerRequestException.class)
+  @Test
   public void testLocalityRelaxationDifferentLevels() {
-    AMRMClientImpl<ContainerRequest> client =
-        new AMRMClientImpl<ContainerRequest>();
-    Configuration conf = new Configuration();
-    conf.setClass(
-        CommonConfigurationKeysPublic.NET_TOPOLOGY_NODE_SWITCH_MAPPING_IMPL_KEY,
-        MyResolver.class, DNSToSwitchMapping.class);
-    client.init(conf);
-    
-    Resource capability = Resource.newInstance(1024, 1);
-    ContainerRequest request1 =
-        new ContainerRequest(capability, new String[] {"host1", "host2"},
-            null, Priority.newInstance(1), false);
-    client.addContainerRequest(request1);
-    ContainerRequest request2 =
-        new ContainerRequest(capability, null,
-            new String[] {"rack1"}, Priority.newInstance(1), true);
-    client.addContainerRequest(request2);
+    assertThrows(InvalidContainerRequestException.class, () -> {
+      AMRMClientImpl<ContainerRequest> client =
+          new AMRMClientImpl<ContainerRequest>();
+      Configuration conf = new Configuration();
+      conf.setClass(
+          CommonConfigurationKeysPublic.NET_TOPOLOGY_NODE_SWITCH_MAPPING_IMPL_KEY,
+          MyResolver.class, DNSToSwitchMapping.class);
+      client.init(conf);
+
+      Resource capability = Resource.newInstance(1024, 1);
+      ContainerRequest request1 =
+          new ContainerRequest(capability, new String[]{"host1", "host2"},
+          null, Priority.newInstance(1), false);
+      client.addContainerRequest(request1);
+      ContainerRequest request2 = new ContainerRequest(capability, null,
+          new String[]{"rack1"}, Priority.newInstance(1), true);
+      client.addContainerRequest(request2);
+    });
   }
   
   private static class MyResolver implements DNSToSwitchMapping {
 
     @Override
     public List<String> resolve(List<String> names) {
-      return Arrays.asList("/rack1");
+      return Collections.nCopies(names.size(), "/rack1");
     }
 
     @Override
@@ -224,8 +271,16 @@ public class TestAMRMClientContainerRequest {
   private void verifyResourceRequest(
       AMRMClientImpl<ContainerRequest> client, ContainerRequest request,
       String location, boolean expectedRelaxLocality) {
-    ResourceRequest ask =  client.remoteRequestsTable.get(request.getPriority())
-        .get(location).get(request.getCapability()).remoteRequest;
+    verifyResourceRequest(client, request, location, expectedRelaxLocality,
+        ExecutionType.GUARANTEED);
+  }
+
+  private void verifyResourceRequest(
+      AMRMClientImpl<ContainerRequest> client, ContainerRequest request,
+      String location, boolean expectedRelaxLocality,
+      ExecutionType executionType) {
+    ResourceRequest ask = client.getTable(0).get(request.getPriority(),
+        location, executionType, request.getCapability()).remoteRequest;
     assertEquals(location, ask.getResourceName());
     assertEquals(1, ask.getNumContainers());
     assertEquals(expectedRelaxLocality, ask.getRelaxLocality());

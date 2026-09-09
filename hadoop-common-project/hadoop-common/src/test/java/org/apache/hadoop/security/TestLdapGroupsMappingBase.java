@@ -18,10 +18,14 @@
 
 package org.apache.hadoop.security;
 
-import static org.mockito.Mockito.doReturn;
+import static org.apache.hadoop.security.LdapGroupsMapping.LDAP_CTX_FACTORY_CLASS_DEFAULT;
+import static org.apache.hadoop.security.LdapGroupsMapping.LDAP_CTX_FACTORY_CLASS_KEY;
+import static org.apache.hadoop.security.LdapGroupsMapping.LDAP_URL_KEY;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import javax.naming.Context;
 import javax.naming.NamingEnumeration;
 import javax.naming.NamingException;
 import javax.naming.directory.Attribute;
@@ -31,12 +35,17 @@ import javax.naming.directory.BasicAttributes;
 import javax.naming.directory.DirContext;
 import javax.naming.directory.SearchControls;
 import javax.naming.directory.SearchResult;
+import javax.naming.ldap.InitialLdapContext;
+import javax.naming.spi.InitialContextFactory;
 
-import org.junit.Before;
+import org.apache.hadoop.conf.Configuration;
+import org.junit.jupiter.api.BeforeEach;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 import org.mockito.Spy;
+
+import java.util.Hashtable;
 
 public class TestLdapGroupsMappingBase {
   @Mock
@@ -46,19 +55,23 @@ public class TestLdapGroupsMappingBase {
   @Mock
   private NamingEnumeration<SearchResult> groupNames;
   @Mock
+  private NamingEnumeration<SearchResult> parentGroupNames;
+  @Mock
   private SearchResult userSearchResult;
   @Mock
   private Attributes attributes;
   @Spy
   private LdapGroupsMapping groupsMapping = new LdapGroupsMapping();
 
-  protected String[] testGroups = new String[] {"group1", "group2"};
+  private String[] testGroups = new String[] {"group1", "group2"};
+  private String[] testParentGroups =
+      new String[] {"group1", "group2", "group1_1"};
 
-  @Before
+  @BeforeEach
   public void setupMocksBase() throws NamingException {
+    DummyLdapCtxFactory.reset();
     MockitoAnnotations.initMocks(this);
     DirContext ctx = getContext();
-    doReturn(ctx).when(groupsMapping).getDirContext();
 
     when(ctx.search(Mockito.anyString(), Mockito.anyString(),
         Mockito.any(Object[].class), Mockito.any(SearchControls.class))).
@@ -93,11 +106,50 @@ public class TestLdapGroupsMappingBase {
         thenReturn(getUserSearchResult());
 
     when(getUserSearchResult().getAttributes()).thenReturn(getAttributes());
+    // Define results for groups 1 level up
+    SearchResult parentGroupResult = mock(SearchResult.class);
+
+    // only one parent group
+    when(parentGroupNames.hasMoreElements()).thenReturn(true, false);
+    when(parentGroupNames.nextElement()).
+        thenReturn(parentGroupResult);
+
+    // Define the attribute for the parent group
+    Attribute parentGroup1Attr = new BasicAttribute("cn");
+    parentGroup1Attr.add(testParentGroups[2]);
+    Attributes parentGroup1Attrs = new BasicAttributes();
+    parentGroup1Attrs.put(parentGroup1Attr);
+
+    // attach the attributes to the result
+    when(parentGroupResult.getAttributes()).thenReturn(parentGroup1Attrs);
+    when(parentGroupResult.getNameInNamespace()).
+        thenReturn("CN=some_group,DC=test,DC=com");
+  }
+
+  protected Configuration getBaseConf() {
+    return getBaseConf("ldap://test");
+  }
+
+  protected Configuration getBaseConf(String ldapUrl) {
+    return getBaseConf(ldapUrl, getContext());
+  }
+
+  protected Configuration getBaseConf(
+      String ldapUrl, DirContext contextToReturn) {
+    DummyLdapCtxFactory.setContextToReturn(contextToReturn);
+    DummyLdapCtxFactory.setExpectedLdapUrl(ldapUrl);
+
+    Configuration conf = new Configuration();
+    conf.set(LDAP_URL_KEY, ldapUrl);
+    conf.setClass(LDAP_CTX_FACTORY_CLASS_KEY, DummyLdapCtxFactory.class,
+        InitialContextFactory.class);
+    return conf;
   }
 
   protected DirContext getContext() {
     return context;
   }
+
   protected NamingEnumeration<SearchResult> getUserNames() {
     return userNames;
   }
@@ -116,5 +168,79 @@ public class TestLdapGroupsMappingBase {
 
   protected LdapGroupsMapping getGroupsMapping() {
     return groupsMapping;
+  }
+
+  protected String[] getTestGroups() {
+    return testGroups;
+  }
+
+  protected NamingEnumeration getParentGroupNames() {
+    return parentGroupNames;
+  }
+
+  protected String[] getTestParentGroups() {
+    return testParentGroups;
+  }
+
+  /**
+   * Ldap Context Factory implementation to be used for testing to check
+   * contexts are requested for the expected LDAP server URLs etc.
+   */
+  public static class DummyLdapCtxFactory implements InitialContextFactory {
+
+    private static DirContext contextToReturn;
+    private static String expectedLdapUrl;
+    private static String expectedBindUser;
+    private static String expectedBindPassword;
+
+    public DummyLdapCtxFactory() {
+    }
+
+    protected static void setContextToReturn(DirContext ctx) {
+      contextToReturn = ctx;
+    }
+
+    protected static void setExpectedLdapUrl(String url) {
+      expectedLdapUrl = url;
+    }
+
+    public static void setExpectedBindUser(String bindUser) {
+      expectedBindUser = bindUser;
+    }
+
+    public static void setExpectedBindPassword(String bindPassword) {
+      expectedBindPassword = bindPassword;
+    }
+
+    public static void reset() {
+      expectedLdapUrl = null;
+      expectedBindUser = null;
+      expectedBindPassword = null;
+    }
+
+    @Override
+    public Context getInitialContext(Hashtable<?, ?> env)
+        throws NamingException {
+      if (expectedLdapUrl != null) {
+        String actualLdapUrl = (String) env.get(Context.PROVIDER_URL);
+        assertEquals(expectedLdapUrl, actualLdapUrl);
+      }
+      if (expectedBindUser != null) {
+        String actualBindUser = (String) env.get(Context.SECURITY_PRINCIPAL);
+        assertEquals(expectedBindUser, actualBindUser);
+      }
+      if (expectedBindPassword != null) {
+        String actualBindPassword = (String) env.get(
+            Context.SECURITY_CREDENTIALS);
+        assertEquals(expectedBindPassword, actualBindPassword);
+      }
+      if (contextToReturn == null) {
+        Hashtable<Object, Object> newEnv = new Hashtable<>(env);
+        newEnv.put(Context.INITIAL_CONTEXT_FACTORY,
+            LDAP_CTX_FACTORY_CLASS_DEFAULT);
+        contextToReturn = new InitialLdapContext(newEnv, null);
+      }
+      return contextToReturn;
+    }
   }
 }

@@ -17,22 +17,79 @@
  */
 package org.apache.hadoop.ipc;
 
-import static org.junit.Assert.assertSame;
-
+import java.io.BufferedReader;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
+import java.net.Proxy.Type;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.net.SocketException;
 import java.util.HashMap;
 import java.util.Map;
 
 import javax.net.SocketFactory;
 
-import org.junit.Assert;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.CommonConfigurationKeys;
 import org.apache.hadoop.net.NetUtils;
+import org.apache.hadoop.net.SocksSocketFactory;
 import org.apache.hadoop.net.StandardSocketFactory;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.fail;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * test StandardSocketFactory and SocksSocketFactory NetUtils
+ *
+ */
 public class TestSocketFactory {
+
+  private static final int START_STOP_TIMEOUT_SEC = 30;
+
+  private ServerRunnable serverRunnable;
+  private Thread serverThread;
+  private int port;
+
+  private void startTestServer() throws Exception {
+    // start simple tcp server.
+    serverRunnable = new ServerRunnable();
+    serverThread = new Thread(serverRunnable);
+    serverThread.start();
+    final long timeout = System.currentTimeMillis() + START_STOP_TIMEOUT_SEC * 1000;
+    while (!serverRunnable.isReady()) {
+      assertNull(serverRunnable.getThrowable());
+      Thread.sleep(10);
+      if (System.currentTimeMillis() > timeout) {
+        fail("Server thread did not start properly in allowed time of "
+            + START_STOP_TIMEOUT_SEC + " sec.");
+      }
+    }
+    port = serverRunnable.getPort();
+  }
+
+  @AfterEach
+  public void stopTestServer() throws InterruptedException {
+    final Thread t = serverThread;
+    if (t != null) {
+      serverThread = null;
+      port = -1;
+      // stop server
+      serverRunnable.stop();
+      t.join(START_STOP_TIMEOUT_SEC * 1000);
+      assertFalse(t.isAlive());
+      assertNull(serverRunnable.getThrowable());
+    }
+  }
 
   @Test
   public void testSocketFactoryAsKeyInMap() {
@@ -52,10 +109,12 @@ public class TestSocketFactory {
         .getDefaultSocketFactory(conf);
     dummyCache.put(defaultSocketFactory, toBeCached2);
 
-    Assert
-        .assertEquals("The cache contains two elements", 2, dummyCache.size());
-    Assert.assertEquals("Equals of both socket factory shouldn't be same",
-        defaultSocketFactory.equals(dummySocketFactory), false);
+    assertThat(dummyCache.size())
+        .withFailMessage("The cache contains two elements")
+        .isEqualTo(2);
+    assertThat(defaultSocketFactory)
+        .withFailMessage("Equals of both socket factory shouldn't be same")
+        .isNotEqualTo(dummySocketFactory);
 
     assertSame(toBeCached2, dummyCache.remove(defaultSocketFactory));
     dummyCache.put(defaultSocketFactory, toBeCached2);
@@ -64,9 +123,146 @@ public class TestSocketFactory {
   }
 
   /**
-   * A dummy socket factory class that extends the StandardSocketFactory. 
+   * A dummy socket factory class that extends the StandardSocketFactory.
    */
   static class DummySocketFactory extends StandardSocketFactory {
-    
+
   }
+
+  /**
+   * Test SocksSocketFactory.
+   */
+  @Test
+  @Timeout(value = 5)
+  public void testSocksSocketFactory() throws Exception {
+    startTestServer();
+    testSocketFactory(new SocksSocketFactory());
+  }
+
+  /**
+   * Test StandardSocketFactory.
+   */
+  @Test
+  @Timeout(value = 5)
+  public void testStandardSocketFactory() throws Exception {
+    startTestServer();
+    testSocketFactory(new StandardSocketFactory());
+  }
+
+  /*
+   * Common test implementation.
+   */
+  private void testSocketFactory(SocketFactory socketFactory) throws Exception {
+    assertNull(serverRunnable.getThrowable());
+
+    InetAddress address = InetAddress.getLocalHost();
+    Socket socket = socketFactory.createSocket(address, port);
+    checkSocket(socket);
+    socket.close();
+
+    socket = socketFactory.createSocket(address, port,
+        InetAddress.getLocalHost(), 0);
+    checkSocket(socket);
+    socket.close();
+
+    socket = socketFactory.createSocket("localhost", port);
+    checkSocket(socket);
+    socket.close();
+
+    socket = socketFactory.createSocket("localhost", port,
+        InetAddress.getLocalHost(), 0);
+    checkSocket(socket);
+    socket.close();
+
+  }
+
+  /**
+   * test proxy methods
+   */
+  @Test
+  @Timeout(value = 5)
+  public void testProxy() throws Exception {
+    SocksSocketFactory templateWithoutProxy = new SocksSocketFactory();
+    Proxy proxy = new Proxy(Type.SOCKS, InetSocketAddress.createUnresolved(
+        "localhost", 0));
+
+    SocksSocketFactory templateWithProxy = new SocksSocketFactory(proxy);
+    assertThat(templateWithoutProxy).isNotEqualTo(templateWithProxy);
+
+    Configuration configuration = new Configuration();
+    configuration.set("hadoop.socks.server", "localhost:0");
+
+    templateWithoutProxy.setConf(configuration);
+    assertThat(templateWithoutProxy).isEqualTo(templateWithProxy);
+  }
+
+  private void checkSocket(Socket socket) throws Exception {
+    BufferedReader input = new BufferedReader(new InputStreamReader(
+        socket.getInputStream()));
+    DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+    out.writeBytes("test\n");
+    String answer = input.readLine();
+    assertThat(answer).isEqualTo("TEST");
+  }
+
+  /**
+   * Simple tcp server. Server gets a string, transforms it to upper case and returns it.
+   */
+  private static class ServerRunnable implements Runnable {
+
+    private volatile boolean works = true;
+    private ServerSocket testSocket;
+    private volatile boolean ready = false;
+    private volatile Throwable throwable;
+    private int port0;
+
+    @Override
+    public void run() {
+      try {
+        testSocket = new ServerSocket(0);
+        port0 = testSocket.getLocalPort();
+        ready = true;
+        while (works) {
+          try {
+            Socket connectionSocket = testSocket.accept();
+            BufferedReader input = new BufferedReader(new InputStreamReader(
+                connectionSocket.getInputStream()));
+            DataOutputStream out = new DataOutputStream(
+                connectionSocket.getOutputStream());
+            String inData = input.readLine();
+
+            String outData = inData.toUpperCase() + "\n";
+            out.writeBytes(outData);
+          } catch (SocketException ignored) {
+
+          }
+        }
+      } catch (IOException ioe) {
+        ioe.printStackTrace();
+        throwable = ioe;
+      }
+    }
+
+    public void stop() {
+      works = false;
+      try {
+        testSocket.close();
+      } catch (IOException e) {
+        e.printStackTrace();
+      }
+    }
+
+    public boolean isReady() {
+      return ready;
+    }
+
+    public int getPort() {
+      return port0;
+    }
+    
+    public Throwable getThrowable() {
+      return throwable;
+    }
+  }
+
 }

@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+syntax = "proto2";
 option java_package = "org.apache.hadoop.ipc.protobuf";
 option java_outer_classname = "TestProtos";
 option java_generate_equals_and_hash = true;
@@ -90,4 +90,13 @@ message AuthMethodResponseProto {
 
 message UserResponseProto {
   required string user = 1;
+}
+
+message SleepRequestProto2 {
+  optional int64 sleep_time = 1;
+}
+
+message SleepResponseProto2 {
+  optional int64 receive_time = 1;
+  optional int64 response_time = 2;
 }

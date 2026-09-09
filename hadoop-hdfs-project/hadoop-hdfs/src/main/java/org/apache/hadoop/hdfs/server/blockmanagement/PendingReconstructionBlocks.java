@@ -17,6 +17,7 @@
  */
 package org.apache.hadoop.hdfs.server.blockmanagement;
 
+import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_RECONSTRUCTION_PENDING_TIMEOUT_SEC_DEFAULT;
 import static org.apache.hadoop.util.Time.monotonicNow;
 
 import java.io.PrintWriter;
@@ -28,7 +29,9 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.hadoop.classification.VisibleForTesting;
 import org.apache.hadoop.hdfs.protocol.Block;
+import org.apache.hadoop.hdfs.server.namenode.NameNode;
 import org.apache.hadoop.util.Daemon;
 import org.slf4j.Logger;
 
@@ -50,12 +53,14 @@ class PendingReconstructionBlocks {
   private final ArrayList<BlockInfo> timedOutItems;
   Daemon timerThread = null;
   private volatile boolean fsRunning = true;
+  private long timedOutCount = 0L;
 
   //
   // It might take anywhere between 5 to 10 minutes before
   // a request is timed out.
   //
-  private long timeout = 5 * 60 * 1000;
+  private volatile long timeout =
+      DFS_NAMENODE_RECONSTRUCTION_PENDING_TIMEOUT_SEC_DEFAULT * 1000;
   private final static long DEFAULT_RECHECK_INTERVAL = 5 * 60 * 1000;
 
   PendingReconstructionBlocks(long timeoutPeriod) {
@@ -71,12 +76,20 @@ class PendingReconstructionBlocks {
     timerThread.start();
   }
 
+  public void setTimeout(long timeoutPeriod) {
+    this.timeout = timeoutPeriod;
+  }
+
+  public long getTimeout() {
+    return this.timeout;
+  }
+
   /**
    * Add a block to the list of pending reconstructions
    * @param block The corresponding block
    * @param targets The DataNodes where replicas of the block should be placed
    */
-  void increment(BlockInfo block, DatanodeDescriptor... targets) {
+  void increment(BlockInfo block, DatanodeStorageInfo... targets) {
     synchronized (pendingReconstructions) {
       PendingBlockInfo found = pendingReconstructions.get(block);
       if (found == null) {
@@ -94,8 +107,10 @@ class PendingReconstructionBlocks {
    * for this block.
    *
    * @param dn The DataNode that finishes the reconstruction
+   * @return true if the block is decremented to 0 and got removed.
    */
-  void decrement(BlockInfo block, DatanodeDescriptor dn) {
+  boolean decrement(BlockInfo block, DatanodeStorageInfo dn) {
+    boolean removed = false;
     synchronized (pendingReconstructions) {
       PendingBlockInfo found = pendingReconstructions.get(block);
       if (found != null) {
@@ -103,9 +118,11 @@ class PendingReconstructionBlocks {
         found.decrementReplicas(dn);
         if (found.getNumReplicas() <= 0) {
           pendingReconstructions.remove(block);
+          removed = true;
         }
       }
     }
+    return removed;
   }
 
   /**
@@ -115,16 +132,19 @@ class PendingReconstructionBlocks {
    *          The given block whose pending reconstruction requests need to be
    *          removed
    */
-  void remove(BlockInfo block) {
+  PendingBlockInfo remove(BlockInfo block) {
     synchronized (pendingReconstructions) {
-      pendingReconstructions.remove(block);
+      return pendingReconstructions.remove(block);
     }
   }
 
   public void clear() {
     synchronized (pendingReconstructions) {
       pendingReconstructions.clear();
-      timedOutItems.clear();
+      synchronized (timedOutItems) {
+        timedOutItems.clear();
+      }
+      timedOutCount = 0L;
     }
   }
 
@@ -132,7 +152,9 @@ class PendingReconstructionBlocks {
    * The total number of blocks that are undergoing reconstruction.
    */
   int size() {
-    return pendingReconstructions.size();
+    synchronized (pendingReconstructions) {
+      return pendingReconstructions.size();
+    }
   }
 
   /**
@@ -149,6 +171,16 @@ class PendingReconstructionBlocks {
   }
 
   /**
+   * Used for metrics.
+   * @return The number of timeouts
+   */
+  long getNumTimedOuts() {
+    synchronized (timedOutItems) {
+      return timedOutCount + timedOutItems.size();
+    }
+  }
+
+  /**
    * Returns a list of blocks that have timed out their
    * reconstruction requests. Returns null if no blocks have
    * timed out.
@@ -158,9 +190,11 @@ class PendingReconstructionBlocks {
       if (timedOutItems.size() <= 0) {
         return null;
       }
+      int size = timedOutItems.size();
       BlockInfo[] blockList = timedOutItems.toArray(
-          new BlockInfo[timedOutItems.size()]);
+          new BlockInfo[size]);
       timedOutItems.clear();
+      timedOutCount += size;
       return blockList;
     }
   }
@@ -174,11 +208,11 @@ class PendingReconstructionBlocks {
    */
   static class PendingBlockInfo {
     private long timeStamp;
-    private final List<DatanodeDescriptor> targets;
+    private final List<DatanodeStorageInfo> targets;
 
-    PendingBlockInfo(DatanodeDescriptor[] targets) {
+    PendingBlockInfo(DatanodeStorageInfo[] targets) {
       this.timeStamp = monotonicNow();
-      this.targets = targets == null ? new ArrayList<DatanodeDescriptor>()
+      this.targets = targets == null ? new ArrayList<DatanodeStorageInfo>()
           : new ArrayList<>(Arrays.asList(targets));
     }
 
@@ -190,9 +224,9 @@ class PendingReconstructionBlocks {
       timeStamp = monotonicNow();
     }
 
-    void incrementReplicas(DatanodeDescriptor... newTargets) {
+    void incrementReplicas(DatanodeStorageInfo... newTargets) {
       if (newTargets != null) {
-        for (DatanodeDescriptor newTarget : newTargets) {
+        for (DatanodeStorageInfo newTarget : newTargets) {
           if (!targets.contains(newTarget)) {
             targets.add(newTarget);
           }
@@ -200,12 +234,22 @@ class PendingReconstructionBlocks {
       }
     }
 
-    void decrementReplicas(DatanodeDescriptor dn) {
-      targets.remove(dn);
+    void decrementReplicas(DatanodeStorageInfo dn) {
+      Iterator<DatanodeStorageInfo> iterator = targets.iterator();
+      while (iterator.hasNext()) {
+        DatanodeStorageInfo next = iterator.next();
+        if (next.getDatanodeDescriptor() == dn.getDatanodeDescriptor()) {
+          iterator.remove();
+        }
+      }
     }
 
     int getNumReplicas() {
       return targets.size();
+    }
+
+    List<DatanodeStorageInfo> getTargets() {
+      return targets;
     }
   }
 
@@ -245,6 +289,7 @@ class PendingReconstructionBlocks {
               timedOutItems.add(block);
             }
             LOG.warn("PendingReconstructionMonitor timed out " + block);
+            NameNode.getNameNodeMetrics().incTimeoutReReplications();
             iter.remove();
           }
         }
@@ -252,6 +297,13 @@ class PendingReconstructionBlocks {
     }
   }
 
+  /**
+   * @return timer thread.
+   */
+  @VisibleForTesting
+  public Daemon getTimerThread() {
+    return timerThread;
+  }
   /*
    * Shuts down the pending reconstruction monitor thread.
    * Waits for the thread to exit.
@@ -283,5 +335,15 @@ class PendingReconstructionBlocks {
             pendingBlock.getNumReplicas());
       }
     }
+  }
+
+  List<DatanodeStorageInfo> getTargets(BlockInfo block) {
+    synchronized (pendingReconstructions) {
+      PendingBlockInfo found = pendingReconstructions.get(block);
+      if (found != null) {
+        return new ArrayList<>(found.targets);
+      }
+    }
+    return null;
   }
 }

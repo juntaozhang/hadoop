@@ -18,12 +18,12 @@
 
 package org.apache.hadoop.hdfs.protocol;
 
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
-import static org.mockito.Matchers.any;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 
@@ -53,13 +53,12 @@ import org.apache.hadoop.hdfs.server.protocol.DatanodeStorage;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo.Capability;
 import org.apache.hadoop.hdfs.server.protocol.StorageBlockReport;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 
-import com.google.protobuf.ByteString;
-import com.google.protobuf.RpcController;
-import com.google.protobuf.ServiceException;
+import org.apache.hadoop.thirdparty.protobuf.ByteString;
+import org.apache.hadoop.thirdparty.protobuf.ServiceException;
 
 public class TestBlockListAsLongs {
   static Block b1 = new Block(1, 11, 111);
@@ -178,14 +177,26 @@ public class TestBlockListAsLongs {
       assertNotNull(replica);
       Replica expected = reportReplicas.remove(replica.getBlockId());
       assertNotNull(expected);
-      assertEquals("wrong bytes",
-          expected.getNumBytes(), replica.getNumBytes());
-      assertEquals("wrong genstamp",
-          expected.getGenerationStamp(), replica.getGenerationStamp());
-      assertEquals("wrong replica state",
-          expected.getState(), replica.getState());
+      assertEquals(expected.getNumBytes(), replica.getNumBytes(), "wrong bytes");
+      assertEquals(expected.getGenerationStamp(), replica.getGenerationStamp(),
+          "wrong genstamp");
+      assertEquals(expected.getState(), replica.getState(), "wrong replica state");
     }
     assertTrue(reportReplicas.isEmpty());
+  }
+
+  private BlockListAsLongs getBlockList(Replica ... replicas) {
+    int numBlocks = replicas.length;
+    List<Long> longs = new ArrayList<Long>(2 + numBlocks);
+    longs.add(Long.valueOf(numBlocks));
+    longs.add(0L);
+    for(Replica r : replicas) {
+      longs.add(r.getBlockId());
+      longs.add(r.getBytesOnDisk());
+      longs.add(r.getGenerationStamp());
+    }
+    BlockListAsLongs blockList = BlockListAsLongs.decodeLongs(longs);
+    return blockList;
   }
 
   @Test
@@ -208,9 +219,8 @@ public class TestBlockListAsLongs {
         request.set((BlockReportRequestProto) args[1]);
         return BlockReportResponseProto.newBuilder().build();
       }
-    }).when(mockProxy).blockReport(any(RpcController.class),
-                                   any(BlockReportRequestProto.class));
-    
+    }).when(mockProxy).blockReport(any(), any(BlockReportRequestProto.class));
+
     @SuppressWarnings("resource")
     DatanodeProtocolClientSideTranslatorPB nn =
         new DatanodeProtocolClientSideTranslatorPB(mockProxy);
@@ -228,7 +238,7 @@ public class TestBlockListAsLongs {
     request.set(null);
     nsInfo.setCapabilities(Capability.STORAGE_BLOCK_REPORT_BUFFERS.getMask());
     nn.blockReport(reg, "pool", sbr,
-        new BlockReportContext(1, 0, System.nanoTime(), 0L, true));
+        new BlockReportContext(1, 0, System.nanoTime(), 0L));
     BlockReportRequestProto proto = request.get();
     assertNotNull(proto);
     assertTrue(proto.getReports(0).getBlocksList().isEmpty());
@@ -237,8 +247,11 @@ public class TestBlockListAsLongs {
     // back up to prior version and check DN sends old-style BR
     request.set(null);
     nsInfo.setCapabilities(Capability.UNKNOWN.getMask());
-    nn.blockReport(reg, "pool", sbr,
-        new BlockReportContext(1, 0, System.nanoTime(), 0L, true));
+    BlockListAsLongs blockList = getBlockList(r);
+    StorageBlockReport[] obp = new StorageBlockReport[] {
+        new StorageBlockReport(new DatanodeStorage("s1"), blockList) };
+    nn.blockReport(reg, "pool", obp,
+        new BlockReportContext(1, 0, System.nanoTime(), 0L));
     proto = request.get();
     assertNotNull(proto);
     assertFalse(proto.getReports(0).getBlocksList().isEmpty());

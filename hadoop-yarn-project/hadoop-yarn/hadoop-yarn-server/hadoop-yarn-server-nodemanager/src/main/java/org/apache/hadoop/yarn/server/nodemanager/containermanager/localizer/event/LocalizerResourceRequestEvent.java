@@ -21,7 +21,6 @@ import org.apache.hadoop.yarn.api.records.LocalResourceVisibility;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.localizer.LocalizedResource;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.localizer.LocalizerContext;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.localizer.ResourceLocalizationService;
-import org.apache.hadoop.yarn.util.ConverterUtils;
 
 /**
  * Event indicating that the {@link ResourceLocalizationService}
@@ -37,7 +36,7 @@ public class LocalizerResourceRequestEvent extends LocalizerEvent {
   public LocalizerResourceRequestEvent(LocalizedResource resource,
       LocalResourceVisibility vis, LocalizerContext context, String pattern) {
     super(LocalizerEventType.REQUEST_RESOURCE_LOCALIZATION,
-        ConverterUtils.toString(context.getContainerId()));
+        context.getContainerId().toString());
     this.vis = vis;
     this.context = context;
     this.resource = resource;

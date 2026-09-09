@@ -17,10 +17,9 @@
  */
 package org.apache.hadoop.yarn.server.timeline;
 
-import com.google.common.collect.Sets;
+import org.apache.hadoop.util.Sets;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.timeline.TimelineEntityGroupId;
-import org.apache.hadoop.yarn.util.ConverterUtils;
 
 import java.util.Collection;
 import java.util.Set;
@@ -34,15 +33,16 @@ class EntityGroupPlugInForTest extends TimelineEntityGroupPlugin {
   public Set<TimelineEntityGroupId> getTimelineEntityGroupId(String entityType,
       NameValuePair primaryFilter,
       Collection<NameValuePair> secondaryFilters) {
-    ApplicationId appId
-        = ConverterUtils.toApplicationId(primaryFilter.getValue().toString());
+    ApplicationId appId = ApplicationId.fromString(
+        primaryFilter.getValue().toString());
     return Sets.newHashSet(getStandardTimelineGroupId(appId));
   }
 
   @Override
   public Set<TimelineEntityGroupId> getTimelineEntityGroupId(String entityId,
       String entityType) {
-    ApplicationId appId = ConverterUtils.toApplicationId(entityId);
+    ApplicationId appId = ApplicationId.fromString(
+        entityId);
     return Sets.newHashSet(getStandardTimelineGroupId(appId));
   }
 

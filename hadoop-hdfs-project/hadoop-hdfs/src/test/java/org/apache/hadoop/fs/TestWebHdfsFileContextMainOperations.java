@@ -18,15 +18,16 @@
 
 package org.apache.hadoop.fs;
 
-import org.apache.commons.lang.RandomStringUtils;
+import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.HdfsConfiguration;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
 import org.apache.hadoop.security.UserGroupInformation;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.apache.hadoop.test.GenericTestUtils;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
 import javax.security.auth.login.LoginException;
 import java.io.IOException;
@@ -37,8 +38,8 @@ import java.util.EnumSet;
 import static org.apache.hadoop.fs.CreateFlag.CREATE;
 import static org.apache.hadoop.fs.FileContextTestHelper.getDefaultBlockSize;
 import static org.apache.hadoop.fs.FileContextTestHelper.getFileData;
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Test of FileContext apis on Webhdfs.
@@ -63,14 +64,14 @@ public class TestWebHdfsFileContextMainOperations
 
   @Override
   protected FileContextTestHelper createFileContextHelper() {
-    return new FileContextTestHelper("/tmp/TestWebHdfsFileContextMainOperations");
+    return new FileContextTestHelper();
   }
 
   public URI getWebhdfsUrl() {
     return webhdfsUrl;
   }
 
-  @BeforeClass
+  @BeforeAll
   public static void clusterSetupAtBeginning()
       throws IOException, LoginException, URISyntaxException {
 
@@ -84,12 +85,12 @@ public class TestWebHdfsFileContextMainOperations
     fc.mkdir(defaultWorkingDirectory, FileContext.DEFAULT_PERM, true);
   }
 
-  @Before
+  @BeforeEach
   public void setUp() throws Exception {
     URI webhdfsUrlReal = getWebhdfsUrl();
     Path testBuildData = new Path(
-        webhdfsUrlReal + "/build/test/data/" + RandomStringUtils
-            .randomAlphanumeric(10));
+        webhdfsUrlReal + "/" + GenericTestUtils.DEFAULT_TEST_DATA_PATH
+            + RandomStringUtils.randomAlphanumeric(10));
     Path rootPath = new Path(testBuildData, "root-uri");
 
     localFsRootPath = rootPath.makeQualified(webhdfsUrlReal, null);
@@ -152,7 +153,7 @@ public class TestWebHdfsFileContextMainOperations
     assertArrayEquals(data, bb);
   }
 
-  @AfterClass
+  @AfterAll
   public static void ClusterShutdownAtEnd() throws Exception {
     if (cluster != null) {
       cluster.shutdown();

@@ -25,20 +25,24 @@ import java.io.PrintWriter;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.charset.Charset;
-import java.util.List;
 import java.util.Random;
 import java.util.Set;
 
-import javax.inject.Inject;
-import javax.inject.Singleton;
+import com.google.inject.Inject;
+import com.google.inject.Singleton;
+import javax.servlet.Filter;
 import javax.servlet.FilterChain;
+import javax.servlet.FilterConfig;
+import javax.servlet.ServletRequest;
+import javax.servlet.ServletResponse;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.http.HtmlQuoting;
+import org.apache.hadoop.http.IsActiveServlet;
+import org.apache.hadoop.util.Sets;
 import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.ContainerId;
@@ -47,20 +51,15 @@ import org.apache.hadoop.yarn.exceptions.YarnRuntimeException;
 import org.apache.hadoop.yarn.server.resourcemanager.RMContext;
 import org.apache.hadoop.yarn.server.webproxy.ProxyUriUtils;
 import org.apache.hadoop.yarn.util.Apps;
-import org.apache.hadoop.yarn.util.ConverterUtils;
 import org.apache.hadoop.yarn.webapp.YarnWebParams;
 import org.apache.hadoop.yarn.webapp.util.WebAppUtils;
-import org.apache.http.NameValuePair;
-import org.apache.http.client.utils.URLEncodedUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.collect.Sets;
 import com.google.inject.Injector;
-import com.sun.jersey.guice.spi.container.servlet.GuiceContainer;
 
 @Singleton
-public class RMWebAppFilter extends GuiceContainer {
+public class RMWebAppFilter implements Filter {
   private static final Logger LOG =
       LoggerFactory.getLogger(RMWebAppFilter.class);
 
@@ -72,7 +71,8 @@ public class RMWebAppFilter extends GuiceContainer {
 
   // define a set of URIs which do not need to do redirection
   private static final Set<String> NON_REDIRECTED_URIS = Sets.newHashSet(
-      "/conf", "/stacks", "/logLevel", "/logs");
+      "/conf", "/stacks", "/logLevel", "/logs", IsActiveServlet.PATH_SPEC,
+      "/jmx", "/prom");
   private String path;
   private boolean ahsEnabled;
   private String ahsPageURLPrefix;
@@ -80,10 +80,13 @@ public class RMWebAppFilter extends GuiceContainer {
   private static final int MAX_SLEEP_TIME = 5 * 60;
   private static final Random randnum = new Random();
 
+  @Override
+  public void init(FilterConfig filterConfig) throws ServletException {
+  }
+
   @Inject
   public RMWebAppFilter(Injector injector, Configuration conf) {
-    super(injector);
-    this.injector=injector;
+    this.injector = injector;
     InetSocketAddress sock = YarnConfiguration.useHttps(conf)
         ? conf.getSocketAddr(YarnConfiguration.RM_WEBAPP_HTTPS_ADDRESS,
             YarnConfiguration.DEFAULT_RM_WEBAPP_HTTPS_ADDRESS,
@@ -92,7 +95,7 @@ public class RMWebAppFilter extends GuiceContainer {
             YarnConfiguration.DEFAULT_RM_WEBAPP_ADDRESS,
             YarnConfiguration.DEFAULT_RM_WEBAPP_PORT);
 
-    path = sock.getHostName() + ":" + Integer.toString(sock.getPort());
+    path = sock.getHostName() + ":" + sock.getPort();
     path = YarnConfiguration.useHttps(conf)
         ? "https://" + path
         : "http://" + path;
@@ -106,9 +109,12 @@ public class RMWebAppFilter extends GuiceContainer {
   }
 
   @Override
-  public void doFilter(HttpServletRequest request,
-      HttpServletResponse response, FilterChain chain) throws IOException,
+  public void doFilter(ServletRequest servletRequest,
+      ServletResponse servletResponse, FilterChain chain) throws IOException,
       ServletException {
+    HttpServletRequest request = (HttpServletRequest) servletRequest;
+    HttpServletResponse response = (HttpServletResponse) servletResponse;
+
     response.setCharacterEncoding("UTF-8");
     String htmlEscapedUri = HtmlQuoting.quoteHtmlChars(request.getRequestURI());
 
@@ -116,22 +122,10 @@ public class RMWebAppFilter extends GuiceContainer {
       htmlEscapedUri = "/";
     }
 
-    String uriWithQueryString = htmlEscapedUri;
-    String htmlEscapedUriWithQueryString = htmlEscapedUri;
-
-    String queryString = request.getQueryString();
-    if (queryString != null && !queryString.isEmpty()) {
-      String reqEncoding = request.getCharacterEncoding();
-      if (reqEncoding == null || reqEncoding.isEmpty()) {
-        reqEncoding = "ISO-8859-1";
-      }
-      Charset encoding = Charset.forName(reqEncoding);
-      List<NameValuePair> params = URLEncodedUtils.parse(queryString, encoding);
-      String urlEncodedQueryString = URLEncodedUtils.format(params, encoding);
-      uriWithQueryString += "?" + urlEncodedQueryString;
-      htmlEscapedUriWithQueryString = HtmlQuoting.quoteHtmlChars(
-          request.getRequestURI() + "?" + urlEncodedQueryString);
-    }
+    String uriWithQueryString =
+        WebAppUtils.appendQueryParams(request, htmlEscapedUri);
+    String htmlEscapedUriWithQueryString =
+        WebAppUtils.getHtmlEscapedURIWithQueryString(request);
 
     RMWebApp rmWebApp = injector.getInstance(RMWebApp.class);
     rmWebApp.checkIfStandbyRM();
@@ -191,7 +185,7 @@ public class RMWebAppFilter extends GuiceContainer {
       }
     }
 
-    super.doFilter(request, response, chain);
+    chain.doFilter(request, response);
   }
 
   private String ahsRedirectPath(String uri, RMWebApp rmWebApp) {
@@ -220,7 +214,7 @@ public class RMWebAppFilter extends GuiceContainer {
           break;
         case "appattempt":
           try{
-            appAttemptId = ConverterUtils.toApplicationAttemptId(parts[3]);
+            appAttemptId = ApplicationAttemptId.fromString(parts[3]);
           } catch (IllegalArgumentException e) {
             LOG.debug("Error parsing {} as an ApplicationAttemptId",
                 parts[3], e);
@@ -256,6 +250,7 @@ public class RMWebAppFilter extends GuiceContainer {
 
   private boolean shouldRedirect(RMWebApp rmWebApp, String uri) {
     return !uri.equals("/" + rmWebApp.wsName() + "/v1/cluster/info")
+        && !uri.equals("/ws/v1/cluster/info")
         && !uri.equals("/" + rmWebApp.name() + "/cluster")
         && !uri.startsWith(ProxyUriUtils.PROXY_BASE)
         && !NON_REDIRECTED_URIS.contains(uri);
@@ -288,5 +283,9 @@ public class RMWebAppFilter extends GuiceContainer {
   private static int calculateExponentialTime(int retries) {
     long baseTime = BASIC_SLEEP_TIME * (1L << retries);
     return (int) (baseTime * (randnum.nextDouble() + 0.5));
+  }
+
+  @Override
+  public void destroy() {
   }
 }

@@ -17,15 +17,15 @@
 */
 package org.apache.hadoop.yarn.server.nodemanager.api.protocolrecords.impl.pb;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 
-import org.junit.Assert;
+import org.apache.hadoop.yarn.api.records.URL;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
@@ -47,8 +47,9 @@ import org.apache.hadoop.yarn.server.nodemanager.api.protocolrecords.LocalizerAc
 import org.apache.hadoop.yarn.server.nodemanager.api.protocolrecords.LocalizerHeartbeatResponse;
 import org.apache.hadoop.yarn.server.nodemanager.api.protocolrecords.LocalizerStatus;
 import org.apache.hadoop.yarn.server.nodemanager.api.protocolrecords.ResourceStatusType;
-import org.apache.hadoop.yarn.util.ConverterUtils;
-import org.junit.Test;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 public class TestPBRecordImpl {
 
@@ -62,8 +63,8 @@ public class TestPBRecordImpl {
   static LocalResource createResource() {
     LocalResource ret = recordFactory.newRecordInstance(LocalResource.class);
     assertTrue(ret instanceof LocalResourcePBImpl);
-    ret.setResource(ConverterUtils.getYarnUrlFromPath(new Path(
-      "hdfs://y.ak:9820/foo/bar")));
+    ret.setResource(URL.fromPath(new Path(
+      "hdfs://y.ak:8020/foo/bar")));
     ret.setSize(4344L);
     ret.setTimestamp(3141592653589793L);
     ret.setVisibility(LocalResourceVisibility.PUBLIC);
@@ -76,7 +77,7 @@ public class TestPBRecordImpl {
     assertTrue(ret instanceof LocalResourceStatusPBImpl);
     ret.setResource(createResource());
     ret.setLocalPath(
-        ConverterUtils.getYarnUrlFromPath(
+        URL.fromPath(
           new Path("file:///local/foo/bar")));
     ret.setStatus(ResourceStatusType.FETCH_SUCCESS);
     ret.setLocalSize(4443L);
@@ -109,15 +110,16 @@ public class TestPBRecordImpl {
     ResourceLocalizationSpec resource =
       recordFactory.newRecordInstance(ResourceLocalizationSpec.class);
     resource.setResource(rsrc);
-    resource.setDestinationDirectory(ConverterUtils
-      .getYarnUrlFromPath(new Path("/tmp" + System.currentTimeMillis())));
+    resource.setDestinationDirectory(
+        URL.fromPath((new Path("/tmp" + System.currentTimeMillis()))));
     rsrcs.add(resource);
     ret.setResourceSpecs(rsrcs);
     System.out.println(resource);
     return ret;
   }
 
-  @Test(timeout=10000)
+  @Test
+  @Timeout(value = 10)
   public void testLocalResourceStatusSerDe() throws Exception {
     LocalResourceStatus rsrcS = createLocalResourceStatus();
     assertTrue(rsrcS instanceof LocalResourceStatusPBImpl);
@@ -137,7 +139,8 @@ public class TestPBRecordImpl {
     assertEquals(createResource(), rsrcD.getResource());
   }
 
-  @Test(timeout=10000)
+  @Test
+  @Timeout(value = 10)
   public void testLocalizerStatusSerDe() throws Exception {
     LocalizerStatus rsrcS = createLocalizerStatus();
     assertTrue(rsrcS instanceof LocalizerStatusPBImpl);
@@ -159,7 +162,8 @@ public class TestPBRecordImpl {
     assertEquals(createLocalResourceStatus(), rsrcD.getResourceStatus(0));
   }
 
-  @Test(timeout=10000)
+  @Test
+  @Timeout(value = 10)
   public void testLocalizerHeartbeatResponseSerDe() throws Exception {
     LocalizerHeartbeatResponse rsrcS = createLocalizerHeartbeatResponse();
     assertTrue(rsrcS instanceof LocalizerHeartbeatResponsePBImpl);
@@ -181,14 +185,15 @@ public class TestPBRecordImpl {
   }
 
 
-  @Test(timeout=10000)
+  @Test
+  @Timeout(value = 10)
   public void testSerializedExceptionDeSer() throws Exception{
     // without cause
     YarnException yarnEx = new YarnException("Yarn_Exception");
     SerializedException serEx = SerializedException.newInstance(yarnEx);
     Throwable throwable = serEx.deSerialize();
-    Assert.assertEquals(yarnEx.getClass(), throwable.getClass());
-    Assert.assertEquals(yarnEx.getMessage(), throwable.getMessage());
+    assertEquals(yarnEx.getClass(), throwable.getClass());
+    assertEquals(yarnEx.getMessage(), throwable.getMessage());
 
     // with cause
     IOException ioe = new IOException("Test_IOException");
@@ -200,13 +205,13 @@ public class TestPBRecordImpl {
     SerializedException serEx2 = SerializedException.newInstance(yarnEx2);
     Throwable throwable2 = serEx2.deSerialize();
     throwable2.printStackTrace();
-    Assert.assertEquals(yarnEx2.getClass(), throwable2.getClass());
-    Assert.assertEquals(yarnEx2.getMessage(), throwable2.getMessage());
+    assertEquals(yarnEx2.getClass(), throwable2.getClass());
+    assertEquals(yarnEx2.getMessage(), throwable2.getMessage());
 
-    Assert.assertEquals(runtimeException.getClass(), throwable2.getCause().getClass());
-    Assert.assertEquals(runtimeException.getMessage(), throwable2.getCause().getMessage());
+    assertEquals(runtimeException.getClass(), throwable2.getCause().getClass());
+    assertEquals(runtimeException.getMessage(), throwable2.getCause().getMessage());
 
-    Assert.assertEquals(ioe.getClass(), throwable2.getCause().getCause().getClass());
-    Assert.assertEquals(ioe.getMessage(), throwable2.getCause().getCause().getMessage());
+    assertEquals(ioe.getClass(), throwable2.getCause().getCause().getClass());
+    assertEquals(ioe.getMessage(), throwable2.getCause().getCause().getMessage());
   }
 }

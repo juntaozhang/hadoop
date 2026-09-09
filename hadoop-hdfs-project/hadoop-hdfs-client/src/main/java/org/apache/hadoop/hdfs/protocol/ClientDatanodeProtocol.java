@@ -30,6 +30,7 @@ import org.apache.hadoop.hdfs.security.token.block.BlockTokenSelector;
 import org.apache.hadoop.security.KerberosInfo;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.security.token.TokenInfo;
+import org.apache.hadoop.hdfs.server.datanode.DiskBalancerWorkStatus;
 
 /** An client-datanode protocol for block recovery
  */
@@ -142,7 +143,7 @@ public interface ClientDatanodeProtocol {
 
   /**
    * Get the status of the previously issued reconfig task.
-   * @see {@link org.apache.hadoop.conf.ReconfigurationTaskStatus}.
+   * @see org.apache.hadoop.conf.ReconfigurationTaskStatus
    */
   ReconfigurationTaskStatus getReconfigurationStatus() throws IOException;
 
@@ -163,4 +164,39 @@ public interface ClientDatanodeProtocol {
    * @return balancer bandwidth
    */
   long getBalancerBandwidth() throws IOException;
+
+  /**
+   * Get volume report of datanode.
+   */
+  List<DatanodeVolumeInfo> getVolumeReport() throws IOException;
+
+  /**
+   * Submit a disk balancer plan for execution.
+   */
+  void submitDiskBalancerPlan(String planID, long planVersion, String planFile,
+                              String planData, boolean skipDateCheck)
+       throws IOException;
+
+  /**
+   * Cancel an executing plan.
+   *
+   * @param planID - A SHA-1 hash of the plan string.
+   */
+  void cancelDiskBalancePlan(String planID) throws IOException;
+
+
+  /**
+   * Gets the status of an executing diskbalancer Plan.
+   */
+  DiskBalancerWorkStatus queryDiskBalancerPlan() throws IOException;
+
+  /**
+   * Gets a run-time configuration value from running diskbalancer instance.
+   * For example : Disk Balancer bandwidth of a running instance.
+   *
+   * @param key runtime configuration key
+   * @return value of the key as a string.
+   * @throws IOException - Throws if there is no such key
+   */
+  String getDiskBalancerSetting(String key) throws IOException;
 }

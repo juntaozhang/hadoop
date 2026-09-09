@@ -29,11 +29,10 @@ import javax.management.MBeanInfo;
 import javax.management.ObjectName;
 import javax.management.ReflectionException;
 
-import static com.google.common.base.Preconditions.*;
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.Maps;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import static org.apache.hadoop.util.Preconditions.*;
+import org.apache.hadoop.classification.VisibleForTesting;
+import org.apache.hadoop.util.Preconditions;
+import org.apache.hadoop.thirdparty.com.google.common.collect.Maps;
 
 import org.apache.hadoop.metrics2.AbstractMetric;
 import org.apache.hadoop.metrics2.MetricsFilter;
@@ -42,6 +41,8 @@ import org.apache.hadoop.metrics2.MetricsTag;
 import static org.apache.hadoop.metrics2.impl.MetricsConfig.*;
 import org.apache.hadoop.metrics2.util.MBeans;
 import org.apache.hadoop.util.Time;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import static org.apache.hadoop.metrics2.util.Contracts.*;
 
@@ -50,7 +51,8 @@ import static org.apache.hadoop.metrics2.util.Contracts.*;
  */
 class MetricsSourceAdapter implements DynamicMBean {
 
-  private static final Log LOG = LogFactory.getLog(MetricsSourceAdapter.class);
+  private static final Logger LOG =
+      LoggerFactory.getLogger(MetricsSourceAdapter.class);
 
   private final String prefix, name;
   private final MetricsSource source;
@@ -59,7 +61,6 @@ class MetricsSourceAdapter implements DynamicMBean {
   private final MBeanInfoBuilder infoBuilder;
   private final Iterable<MetricsTag> injectedTags;
 
-  private Iterable<MetricsRecordImpl> lastRecs;
   private boolean lastRecsCleared;
   private long jmxCacheTS = 0;
   private long jmxCacheTTL;
@@ -175,18 +176,19 @@ class MetricsSourceAdapter implements DynamicMBean {
       }
     }
 
+    // HADOOP-11361: Release lock here for avoid deadlock between
+    // MetricsSystemImpl's lock and MetricsSourceAdapter's lock.
+    Iterable<MetricsRecordImpl> lastRecs = null;
     if (getAllMetrics) {
-      MetricsCollectorImpl builder = new MetricsCollectorImpl();
-      getMetrics(builder, true);
+      lastRecs = getMetrics(new MetricsCollectorImpl(), true);
     }
 
-    synchronized(this) {
-      updateAttrCache();
-      if (getAllMetrics) {
-        updateInfoCache();
+    synchronized (this) {
+      if (lastRecs != null) {
+        updateAttrCache(lastRecs);
+        updateInfoCache(lastRecs);
       }
       jmxCacheTS = Time.now();
-      lastRecs = null;  // in case regular interval update is not running
       lastRecsCleared = true;
     }
   }
@@ -194,11 +196,6 @@ class MetricsSourceAdapter implements DynamicMBean {
   Iterable<MetricsRecordImpl> getMetrics(MetricsCollectorImpl builder,
                                          boolean all) {
     builder.setRecordFilter(recordFilter).setMetricFilter(metricFilter);
-    synchronized(this) {
-      if (lastRecs == null && jmxCacheTS == 0) {
-        all = true; // Get all the metrics to populate the sink caches
-      }
-    }
     try {
       source.getMetrics(builder, all);
     } catch (Exception e) {
@@ -209,10 +206,7 @@ class MetricsSourceAdapter implements DynamicMBean {
         rb.add(t);
       }
     }
-    synchronized(this) {
-      lastRecs = builder.getRecords();
-      return lastRecs;
-    }
+    return builder.getRecords();
   }
 
   synchronized void stop() {
@@ -246,13 +240,15 @@ class MetricsSourceAdapter implements DynamicMBean {
     return jmxCacheTTL;
   }
 
-  private void updateInfoCache() {
+  private void updateInfoCache(Iterable<MetricsRecordImpl> lastRecs) {
+    Preconditions.checkNotNull(lastRecs, "LastRecs should not be null");
     LOG.debug("Updating info cache...");
     infoCache = infoBuilder.reset(lastRecs).get();
     LOG.debug("Done");
   }
 
-  private int updateAttrCache() {
+  private int updateAttrCache(Iterable<MetricsRecordImpl> lastRecs) {
+    Preconditions.checkNotNull(lastRecs, "LastRecs should not be null");
     LOG.debug("Updating attr cache...");
     int recNo = 0;
     int numMetrics = 0;

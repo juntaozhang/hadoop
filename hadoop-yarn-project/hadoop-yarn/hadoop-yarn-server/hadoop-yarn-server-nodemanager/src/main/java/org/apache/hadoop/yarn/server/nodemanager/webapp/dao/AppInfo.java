@@ -27,7 +27,6 @@ import javax.xml.bind.annotation.XmlRootElement;
 import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.application.Application;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.container.Container;
-import org.apache.hadoop.yarn.util.ConverterUtils;
 
 @XmlRootElement(name = "app")
 @XmlAccessorType(XmlAccessType.FIELD)
@@ -42,14 +41,14 @@ public class AppInfo {
   } // JAXB needs this
 
   public AppInfo(final Application app) {
-    this.id = ConverterUtils.toString(app.getAppId());
+    this.id = app.getAppId().toString();
     this.state = app.getApplicationState().toString();
     this.user = app.getUser();
 
     this.containerids = new ArrayList<String>();
     Map<ContainerId, Container> appContainers = app.getContainers();
     for (ContainerId containerId : appContainers.keySet()) {
-      String containerIdStr = ConverterUtils.toString(containerId);
+      String containerIdStr = containerId.toString();
       containerids.add(containerIdStr);
     }
   }

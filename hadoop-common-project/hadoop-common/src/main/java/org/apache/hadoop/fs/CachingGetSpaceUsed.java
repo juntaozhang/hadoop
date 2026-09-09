@@ -19,12 +19,14 @@ package org.apache.hadoop.fs;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
+import org.apache.hadoop.classification.VisibleForTesting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -43,16 +45,24 @@ public abstract class CachingGetSpaceUsed implements Closeable, GetSpaceUsed {
   protected final AtomicLong used = new AtomicLong();
   private final AtomicBoolean running = new AtomicBoolean(true);
   private final long refreshInterval;
+  private final long jitter;
   private final String dirPath;
   private Thread refreshUsed;
+  private boolean shouldFirstRefresh;
 
   /**
    * This is the constructor used by the builder.
    * All overriding classes should implement this.
+   *
+   * @param builder builder.
+   * @throws IOException raised on errors performing I/O.
    */
   public CachingGetSpaceUsed(CachingGetSpaceUsed.Builder builder)
       throws IOException {
-    this(builder.getPath(), builder.getInterval(), builder.getInitialUsed());
+    this(builder.getPath(),
+        builder.getInterval(),
+        builder.getJitter(),
+        builder.getInitialUsed());
   }
 
   /**
@@ -60,25 +70,44 @@ public abstract class CachingGetSpaceUsed implements Closeable, GetSpaceUsed {
    *
    * @param path        the path to check disk usage in
    * @param interval    refresh the disk usage at this interval
+   * @param jitter      randomize the refresh interval timing by this amount;
+   *                    the actual interval will be chosen uniformly between
+   *                    {@code interval-jitter} and {@code interval+jitter}
    * @param initialUsed use this value until next refresh
    * @throws IOException if we fail to refresh the disk usage
    */
   CachingGetSpaceUsed(File path,
                       long interval,
+                      long jitter,
                       long initialUsed) throws IOException {
-    dirPath = path.getCanonicalPath();
-    refreshInterval = interval;
-    used.set(initialUsed);
+    this.dirPath = path.getCanonicalPath();
+    this.refreshInterval = interval;
+    this.jitter = jitter;
+    this.used.set(initialUsed);
+    this.shouldFirstRefresh = true;
   }
 
   void init() {
     if (used.get() < 0) {
       used.set(0);
+      if (!shouldFirstRefresh) {
+        // Skip initial refresh operation, so we need to do first refresh
+        // operation immediately in refresh thread.
+        initRefreshThread(true);
+        return;
+      }
       refresh();
     }
+    initRefreshThread(false);
+  }
 
+  /**
+   * RunImmediately should set true, if we skip the first refresh.
+   * @param runImmediately The param default should be false.
+   */
+  private void initRefreshThread(boolean runImmediately) {
     if (refreshInterval > 0) {
-      refreshUsed = new Thread(new RefreshThread(this),
+      refreshUsed = new Thread(new RefreshThread(this, runImmediately),
           "refreshUsed-" + dirPath);
       refreshUsed.setDaemon(true);
       refreshUsed.start();
@@ -89,6 +118,14 @@ public abstract class CachingGetSpaceUsed implements Closeable, GetSpaceUsed {
   }
 
   protected abstract void refresh();
+
+  /**
+   * Reset that if we need to do the first refresh.
+   * @param shouldFirstRefresh The flag value to set.
+   */
+  protected void setShouldFirstRefresh(boolean shouldFirstRefresh) {
+    this.shouldFirstRefresh = shouldFirstRefresh;
+  }
 
   /**
    * @return an estimate of space used in the directory path.
@@ -106,6 +143,8 @@ public abstract class CachingGetSpaceUsed implements Closeable, GetSpaceUsed {
 
   /**
    * Increment the cached value of used space.
+   *
+   * @param value dfs used value.
    */
   public void incDfsUsed(long value) {
     used.addAndGet(value);
@@ -120,9 +159,23 @@ public abstract class CachingGetSpaceUsed implements Closeable, GetSpaceUsed {
 
   /**
    * How long in between runs of the background refresh.
+   *
+   * @return refresh interval.
    */
-  long getRefreshInterval() {
+  @VisibleForTesting
+  public long getRefreshInterval() {
     return refreshInterval;
+  }
+
+  /**
+   * Randomize the refresh interval timing by this amount, the actual interval will be chosen
+   * uniformly between {@code interval-jitter} and {@code interval+jitter}.
+   *
+   * @return between interval-jitter and interval+jitter.
+   */
+  @VisibleForTesting
+  public long getJitter() {
+    return jitter;
   }
 
   /**
@@ -146,20 +199,37 @@ public abstract class CachingGetSpaceUsed implements Closeable, GetSpaceUsed {
   private static final class RefreshThread implements Runnable {
 
     final CachingGetSpaceUsed spaceUsed;
+    private boolean runImmediately;
 
-    RefreshThread(CachingGetSpaceUsed spaceUsed) {
+    RefreshThread(CachingGetSpaceUsed spaceUsed, boolean runImmediately) {
       this.spaceUsed = spaceUsed;
+      this.runImmediately = runImmediately;
     }
 
     @Override
     public void run() {
       while (spaceUsed.running()) {
         try {
-          Thread.sleep(spaceUsed.getRefreshInterval());
+          long refreshInterval = spaceUsed.refreshInterval;
+
+          if (spaceUsed.jitter > 0) {
+            long jitter = spaceUsed.jitter;
+            // add/subtract the jitter.
+            refreshInterval +=
+                ThreadLocalRandom.current()
+                                 .nextLong(-jitter, jitter);
+          }
+          // Make sure that after the jitter we didn't end up at 0.
+          refreshInterval = Math.max(refreshInterval, 1);
+          if (!runImmediately) {
+            Thread.sleep(refreshInterval);
+          }
+          runImmediately = false;
           // update the used variable
           spaceUsed.refresh();
         } catch (InterruptedException e) {
-          LOG.warn("Thread Interrupted waiting to refresh disk information", e);
+          LOG.warn("Thread Interrupted waiting to refresh disk information: "
+              + e.getMessage());
           Thread.currentThread().interrupt();
         }
       }

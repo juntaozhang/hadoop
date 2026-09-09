@@ -30,8 +30,10 @@ import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.security.token.delegation.AbstractDelegationTokenIdentifier;
 import org.apache.hadoop.security.token.delegation.AbstractDelegationTokenSecretManager;
 import org.apache.hadoop.security.token.delegation.ZKDelegationTokenSecretManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import com.google.common.annotations.VisibleForTesting;
+import org.apache.hadoop.classification.VisibleForTesting;
 
 /**
  * Delegation Token Manager used by the
@@ -41,6 +43,8 @@ import com.google.common.annotations.VisibleForTesting;
 @InterfaceAudience.Private
 @InterfaceStability.Evolving
 public class DelegationTokenManager {
+  private static final Logger LOG =
+      LoggerFactory.getLogger(DelegationTokenManager.class);
 
   public static final String ENABLE_ZK_KEY = "zk-dt-secret-manager.enable";
 
@@ -123,7 +127,7 @@ public class DelegationTokenManager {
   /**
    * Sets an external <code>DelegationTokenSecretManager</code> instance to
    * manage creation and verification of Delegation Tokens.
-   * <p/>
+   * <p>
    * This is useful for use cases where secrets must be shared across multiple
    * services.
    *
@@ -156,6 +160,14 @@ public class DelegationTokenManager {
   @SuppressWarnings("unchecked")
   public Token<? extends AbstractDelegationTokenIdentifier> createToken(
       UserGroupInformation ugi, String renewer) {
+    return createToken(ugi, renewer, null);
+  }
+
+  @SuppressWarnings("unchecked")
+  public Token<? extends AbstractDelegationTokenIdentifier> createToken(
+      UserGroupInformation ugi, String renewer, String service) {
+    LOG.debug("Creating token with ugi:{}, renewer:{}, service:{}.",
+        ugi, renewer, service !=null ? service : "");
     renewer = (renewer == null) ? ugi.getShortUserName() : renewer;
     String user = ugi.getUserName();
     Text owner = new Text(user);
@@ -168,13 +180,18 @@ public class DelegationTokenManager {
     tokenIdentifier.setOwner(owner);
     tokenIdentifier.setRenewer(new Text(renewer));
     tokenIdentifier.setRealUser(realUser);
-    return new Token(tokenIdentifier, secretManager);
+    Token token = new Token(tokenIdentifier, secretManager);
+    if (service != null) {
+      token.setService(new Text(service));
+    }
+    return token;
   }
 
   @SuppressWarnings("unchecked")
   public long renewToken(
       Token<? extends AbstractDelegationTokenIdentifier> token, String renewer)
           throws IOException {
+    LOG.debug("Renewing token:{} with renewer:{}.", token, renewer);
     return secretManager.renewToken(token, renewer);
   }
 
@@ -182,6 +199,7 @@ public class DelegationTokenManager {
   public void cancelToken(
       Token<? extends AbstractDelegationTokenIdentifier> token,
       String canceler) throws IOException {
+    LOG.debug("Cancelling token:{} with canceler:{}.", token, canceler);
     canceler = (canceler != null) ? canceler :
                verifyToken(token).getShortUserName();
     secretManager.cancelToken(token, canceler);

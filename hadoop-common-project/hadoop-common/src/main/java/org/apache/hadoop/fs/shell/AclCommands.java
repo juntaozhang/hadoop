@@ -22,8 +22,6 @@ import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 
-import com.google.common.collect.Lists;
-
 import org.apache.hadoop.HadoopIllegalArgumentException;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
@@ -35,6 +33,7 @@ import org.apache.hadoop.fs.permission.AclUtil;
 import org.apache.hadoop.fs.permission.FsAction;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.fs.permission.ScopedAclEntries;
+import org.apache.hadoop.util.Lists;
 
 /**
  * Acl related operations
@@ -86,9 +85,9 @@ class AclCommands extends FsCommand {
           (perm.getOtherAction().implies(FsAction.EXECUTE) ? "t" : "T"));
       }
 
-      AclStatus aclStatus = null;
-      List<AclEntry> entries = null;
-      if (perm.getAclBit()) {
+      final AclStatus aclStatus;
+      final List<AclEntry> entries;
+      if (item.stat.hasAcl()) {
         aclStatus = item.fs.getAclStatus(item.path);
         entries = aclStatus.getEntries();
       } else {
@@ -117,7 +116,7 @@ class AclCommands extends FsCommand {
       }
       if (AclUtil.isMinimalAcl(entries)) {
         for (AclEntry entry: entries) {
-          out.println(entry);
+          out.println(entry.toStringStable());
         }
       } else {
         for (AclEntry entry: entries) {
@@ -145,10 +144,10 @@ class AclCommands extends FsCommand {
           out.println(String.format("%s\t#effective:%s", entry,
             effectivePerm.SYMBOL));
         } else {
-          out.println(entry);
+          out.println(entry.toStringStable());
         }
       } else {
-        out.println(entry);
+        out.println(entry.toStringStable());
       }
     }
   }
@@ -173,7 +172,11 @@ class AclCommands extends FsCommand {
         + "  -x :Remove specified ACL entries. Other ACL entries are retained.\n"
         + "  --set :Fully replace the ACL, discarding all existing entries."
         + " The <acl_spec> must include entries for user, group, and others"
-        + " for compatibility with permission bits.\n"
+        + " for compatibility with permission bits. If the ACL spec contains"
+        + " only access entries, then the existing default entries are retained"
+        + ". If the ACL spec contains only default entries, then the existing"
+        + " access entries are retained. If the ACL spec contains both access"
+        + " and default entries, then both are replaced.\n"
         + "  <acl_spec>: Comma separated list of ACL entries.\n"
         + "  <path>: File or directory to modify.\n";
 
@@ -192,6 +195,9 @@ class AclCommands extends FsCommand {
       boolean oneRemoveOption = cf.getOpt("b") || cf.getOpt("k");
       boolean oneModifyOption = cf.getOpt("m") || cf.getOpt("x");
       boolean setOption = cf.getOpt("-set");
+      boolean hasExpectedOptions = cf.getOpt("b") || cf.getOpt("k") ||
+          cf.getOpt("m") || cf.getOpt("x") || cf.getOpt("-set");
+
       if ((bothRemoveOptions || bothModifyOptions)
           || (oneRemoveOption && oneModifyOption)
           || (setOption && (oneRemoveOption || oneModifyOption))) {
@@ -201,10 +207,19 @@ class AclCommands extends FsCommand {
 
       // Only -m, -x and --set expects <acl_spec>
       if (oneModifyOption || setOption) {
+        if (args.isEmpty()) {
+          throw new HadoopIllegalArgumentException(
+              "Missing arguments: <acl_spec> <path>");
+        }
         if (args.size() < 2) {
-          throw new HadoopIllegalArgumentException("<acl_spec> is missing");
+          throw new HadoopIllegalArgumentException(
+              "Missing either <acl_spec> or <path>");
         }
         aclEntries = AclEntry.parseAclSpec(args.removeFirst(), !cf.getOpt("x"));
+        if (aclEntries.isEmpty()) {
+          throw new HadoopIllegalArgumentException(
+              "Missing <acl_spec> entry");
+        }
       }
 
       if (args.isEmpty()) {
@@ -214,6 +229,10 @@ class AclCommands extends FsCommand {
         throw new HadoopIllegalArgumentException("Too many arguments");
       }
 
+      if (!hasExpectedOptions) {
+        throw new HadoopIllegalArgumentException(
+            "Expected one of -b, -k, -m, -x or --set options");
+      }
       // In recursive mode, save a separate list of just the access ACL entries.
       // Only directories may have a default ACL.  When a recursive operation
       // encounters a file under the specified path, it must pass only the

@@ -17,6 +17,13 @@
  */
 package org.apache.hadoop.util;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -26,8 +33,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
-import junit.framework.TestCase;
-
+import org.apache.commons.cli.Option;
+import org.apache.commons.cli.Options;
 import org.apache.commons.math3.util.Pair;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
@@ -38,20 +45,18 @@ import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.security.token.delegation.AbstractDelegationTokenIdentifier;
 import org.apache.hadoop.test.GenericTestUtils;
-import org.apache.commons.cli.Option;
-import org.apache.commons.cli.OptionBuilder;
-import org.apache.commons.cli.Options;
-import org.junit.Assert;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
-import com.google.common.collect.Maps;
-import static org.junit.Assert.fail;
+import org.apache.hadoop.thirdparty.com.google.common.collect.Maps;
 
-public class TestGenericOptionsParser extends TestCase {
+public class TestGenericOptionsParser {
   File testDir;
   Configuration conf;
   FileSystem localFs;
-    
-  
+
+  @Test
   public void testFilesOption() throws Exception {
     File tmpFile = new File(testDir, "tmpfile");
     Path tmpPath = new Path(tmpFile.toString());
@@ -64,9 +69,9 @@ public class TestGenericOptionsParser extends TestCase {
     args[1] = tmpFile.toURI().toString();
     new GenericOptionsParser(conf, args);
     String files = conf.get("tmpfiles");
-    assertNotNull("files is null", files);
-    assertEquals("files option does not match",
-      localFs.makeQualified(tmpPath).toString(), files);
+    assertNotNull(files, "files is null");
+    assertEquals(localFs.makeQualified(tmpPath).toString(), files,
+        "files option does not match");
     
     // pass file as uri
     Configuration conf1 = new Configuration();
@@ -75,9 +80,9 @@ public class TestGenericOptionsParser extends TestCase {
     args[1] = tmpURI.toString();
     new GenericOptionsParser(conf1, args);
     files = conf1.get("tmpfiles");
-    assertNotNull("files is null", files);
-    assertEquals("files option does not match", 
-      localFs.makeQualified(new Path(tmpURI)).toString(), files);
+    assertNotNull(files, "files is null");
+    assertEquals(localFs.makeQualified(new Path(tmpURI)).toString(), files,
+        "files option does not match");
    
     // pass a file that does not exist.
     // GenericOptionParser should throw exception
@@ -90,17 +95,45 @@ public class TestGenericOptionsParser extends TestCase {
     } catch (Exception e) {
       th = e;
     }
-    assertNotNull("throwable is null", th);
-    assertTrue("FileNotFoundException is not thrown",
-      th instanceof FileNotFoundException);
+    assertNotNull(th, "throwable is null");
+    assertTrue(th instanceof FileNotFoundException,
+        "FileNotFoundException is not thrown");
     files = conf2.get("tmpfiles");
-    assertNull("files is not null", files);
+    assertNull(files, "files is not null");
+  }
+
+  @Test
+  public void testLibjarsOption() throws Exception {
+    File tmpJar = new File(testDir, "tmp.jar");
+    Path tmpJarPath = new Path(tmpJar.toString());
+    localFs.create(tmpJarPath);
+    String[] args = new String[2];
+    // pass a libjars option
+    // first, pass the jar directly
+    args[0] = "-libjars";
+    // Convert a file to a URI as File.toString() is not a valid URI on
+    // all platforms and GenericOptionsParser accepts only valid URIs
+    args[1] = tmpJar.toURI().toString();
+    new GenericOptionsParser(conf, args);
+    String libjars = conf.get("tmpjars");
+    assertNotNull(libjars, "libjars is null");
+    assertEquals(localFs.makeQualified(tmpJarPath).toString(), libjars,
+        "libjars does not match");
+
+    // now test the wildcard
+    args[1] = testDir.toURI().toString() + "*";
+    new GenericOptionsParser(conf, args);
+    libjars = conf.get("tmpjars");
+    assertNotNull(libjars, "libjars is null");
+    assertEquals(localFs.makeQualified(tmpJarPath).toString(), libjars,
+        "libjars does not match");
   }
 
   /**
    * Test the case where the libjars, files and archives arguments
    * contains an empty token, which should create an IllegalArgumentException.
    */
+  @Test
   public void testEmptyFilenames() throws Exception {
     List<Pair<String, String>> argsAndConfNames = new ArrayList<Pair<String, String>>();
     argsAndConfNames.add(new Pair<String, String>("-libjars", "tmpjars"));
@@ -108,7 +141,6 @@ public class TestGenericOptionsParser extends TestCase {
     argsAndConfNames.add(new Pair<String, String>("-archives", "tmparchives"));
     for (Pair<String, String> argAndConfName : argsAndConfNames) {
       String arg = argAndConfName.getFirst();
-      String configName = argAndConfName.getSecond();
 
       File tmpFileOne = new File(testDir, "tmpfile1");
       Path tmpPathOne = new Path(tmpFileOne.toString());
@@ -162,12 +194,14 @@ public class TestGenericOptionsParser extends TestCase {
    * Test that options passed to the constructor are used.
    */
   @SuppressWarnings("static-access")
+  @Test
   public void testCreateWithOptions() throws Exception {
     // Create new option newOpt
-    Option opt = OptionBuilder.withArgName("int")
-    .hasArg()
-    .withDescription("A new option")
-    .create("newOpt");
+
+    Option opt = Option.builder("newOpt").argName("int")
+        .hasArg()
+        .desc("A new option")
+        .build();
     Options opts = new Options();
     opts.addOption(opt);
 
@@ -176,27 +210,27 @@ public class TestGenericOptionsParser extends TestCase {
     args[0] = "--newOpt";
     args[1] = "7";
     GenericOptionsParser g = new GenericOptionsParser(opts, args);
-    assertEquals("New option was ignored",
-      "7", g.getCommandLine().getOptionValues("newOpt")[0]);
+    assertEquals("7", g.getCommandLine().getOptionValues("newOpt")[0],
+        "New option was ignored");
   }
 
   /**
    * Test that multiple conf arguments can be used.
    */
+  @Test
   public void testConfWithMultipleOpts() throws Exception {
     String[] args = new String[2];
     args[0] = "--conf=foo";
     args[1] = "--conf=bar";
     GenericOptionsParser g = new GenericOptionsParser(args);
-    assertEquals("1st conf param is incorrect",
-      "foo", g.getCommandLine().getOptionValues("conf")[0]);
-    assertEquals("2st conf param is incorrect",
-      "bar", g.getCommandLine().getOptionValues("conf")[1]);
+    assertEquals("foo", g.getCommandLine().getOptionValues("conf")[0],
+        "1st conf param is incorrect");
+    assertEquals("bar", g.getCommandLine().getOptionValues("conf")[1],
+        "2st conf param is incorrect");
   }
-  
-  @Override
-  protected void setUp() throws Exception {
-    super.setUp();
+
+  @BeforeEach
+  public void setUp() throws Exception {
     conf = new Configuration();
     localFs = FileSystem.getLocal(conf);
     testDir = GenericTestUtils.getTestDir("generic");
@@ -204,9 +238,8 @@ public class TestGenericOptionsParser extends TestCase {
       localFs.delete(new Path(testDir.toString()), true);
   }
 
-  @Override
-  protected void tearDown() throws Exception {
-    super.tearDown();
+  @AfterEach
+  public void tearDown() throws Exception {
     if(testDir.exists()) {
       localFs.delete(new Path(testDir.toString()), true);
     }
@@ -216,6 +249,7 @@ public class TestGenericOptionsParser extends TestCase {
    * testing -fileCache option
    * @throws IOException
    */
+  @Test
   public void testTokenCacheOption() throws IOException {
     FileSystem localFs = FileSystem.getLocal(conf);
     
@@ -236,8 +270,8 @@ public class TestGenericOptionsParser extends TestCase {
       th = e;
     }
     assertNotNull(th);
-    assertTrue("FileNotFoundException is not thrown",
-        th instanceof FileNotFoundException);
+    assertTrue(th instanceof FileNotFoundException,
+        "FileNotFoundException is not thrown");
     
     // create file
     Path tmpPath = localFs.makeQualified(new Path(tmpFile.toString()));
@@ -250,8 +284,8 @@ public class TestGenericOptionsParser extends TestCase {
 
     new GenericOptionsParser(conf, args);
     String fileName = conf.get("mapreduce.job.credentials.binary");
-    assertNotNull("files is null", fileName);
-    assertEquals("files option does not match", tmpPath.toString(), fileName);
+    assertNotNull(fileName, "files is null");
+    assertEquals(tmpPath.toString(), fileName, "files option does not match");
     
     Credentials ugiCreds =
         UserGroupInformation.getCurrentUser().getCredentials();
@@ -264,6 +298,7 @@ public class TestGenericOptionsParser extends TestCase {
   }
 
   /** Test -D parsing */
+  @Test
   public void testDOptionParsing() throws Exception {
     String[] args;
     Map<String,String> expectedMap;
@@ -344,14 +379,14 @@ public class TestGenericOptionsParser extends TestCase {
       assertEquals(entry.getValue(), conf.get(entry.getKey()));
     }
 
-    Assert.assertArrayEquals(
-      Arrays.toString(remainingArgs) + Arrays.toString(expectedRemainingArgs),
-      expectedRemainingArgs, remainingArgs);
+    assertArrayEquals(expectedRemainingArgs, remainingArgs,
+        Arrays.toString(remainingArgs) + Arrays.toString(expectedRemainingArgs));
   }
 
   /** Test passing null as args. Some classes still call
    * Tool interface from java passing null.
    */
+  @Test
   public void testNullArgs() throws IOException {
     GenericOptionsParser parser = new GenericOptionsParser(conf, null);
     parser.getRemainingArgs();

@@ -19,22 +19,30 @@ package org.apache.hadoop.security.ssl;
 
 import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.test.GenericTestUtils;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.apache.hadoop.test.GenericTestUtils.LogCapturer;
+
+import java.util.function.Supplier;
+
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.file.Paths;
 import java.security.KeyPair;
 import java.security.cert.X509Certificate;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Timer;
+import java.util.concurrent.TimeoutException;
 
-import static org.junit.Assert.assertEquals;
 import static org.apache.hadoop.security.ssl.KeyStoreTestUtil.createTrustStore;
 import static org.apache.hadoop.security.ssl.KeyStoreTestUtil.generateCertificate;
 import static org.apache.hadoop.security.ssl.KeyStoreTestUtil.generateKeyPair;
+import static org.junit.jupiter.api.Assertions.*;
 
 public class TestReloadingX509TrustManager {
 
@@ -43,44 +51,40 @@ public class TestReloadingX509TrustManager {
 
   private X509Certificate cert1;
   private X509Certificate cert2;
+  private final LogCapturer reloaderLog = LogCapturer.captureLogs(
+      FileMonitoringTimerTask.LOG);
 
-  @BeforeClass
+  @BeforeAll
   public static void setUp() throws Exception {
     File base = new File(BASEDIR);
     FileUtil.fullyDelete(base);
     base.mkdirs();
   }
 
-  @Test(expected = IOException.class)
+  @Test
   public void testLoadMissingTrustStore() throws Exception {
-    String truststoreLocation = BASEDIR + "/testmissing.jks";
-
-    ReloadingX509TrustManager tm =
-      new ReloadingX509TrustManager("jks", truststoreLocation, "password", 10);
-    try {
-      tm.init();
-    } finally {
-      tm.destroy();
-    }
-  }
-
-  @Test(expected = IOException.class)
-  public void testLoadCorruptTrustStore() throws Exception {
-    String truststoreLocation = BASEDIR + "/testcorrupt.jks";
-    OutputStream os = new FileOutputStream(truststoreLocation);
-    os.write(1);
-    os.close();
-
-    ReloadingX509TrustManager tm =
-      new ReloadingX509TrustManager("jks", truststoreLocation, "password", 10);
-    try {
-      tm.init();
-    } finally {
-      tm.destroy();
-    }
+    assertThrows(IOException.class, () -> {
+      String truststoreLocation = BASEDIR + "/testmissing.jks";
+      ReloadingX509TrustManager tm =
+          new ReloadingX509TrustManager("jks", truststoreLocation, "password");
+    });
   }
 
   @Test
+  public void testLoadCorruptTrustStore() throws Exception {
+    assertThrows(IOException.class, () -> {
+      String truststoreLocation = BASEDIR + "/testcorrupt.jks";
+      OutputStream os = new FileOutputStream(truststoreLocation);
+      os.write(1);
+      os.close();
+
+      ReloadingX509TrustManager tm =
+          new ReloadingX509TrustManager("jks", truststoreLocation, "password");
+    });
+  }
+
+  @Test
+  @Timeout(value = 30)
   public void testReload() throws Exception {
     KeyPair kp = generateKeyPair("RSA");
     cert1 = generateCertificate("CN=Cert1", kp, 30, "SHA1withRSA");
@@ -88,14 +92,17 @@ public class TestReloadingX509TrustManager {
     String truststoreLocation = BASEDIR + "/testreload.jks";
     createTrustStore(truststoreLocation, "password", "cert1", cert1);
 
-    ReloadingX509TrustManager tm =
-      new ReloadingX509TrustManager("jks", truststoreLocation, "password", 10);
+    long reloadInterval = 10;
+    Timer fileMonitoringTimer = new Timer(FileBasedKeyStoresFactory.SSL_MONITORING_THREAD_NAME, true);
+    final ReloadingX509TrustManager tm =
+      new ReloadingX509TrustManager("jks", truststoreLocation, "password");
     try {
-      tm.init();
+      fileMonitoringTimer.schedule(new FileMonitoringTimerTask(
+              Paths.get(truststoreLocation), tm::loadFrom,null), reloadInterval, reloadInterval);
       assertEquals(1, tm.getAcceptedIssuers().length);
 
       // Wait so that the file modification time is different
-      Thread.sleep((tm.getReloadInterval() + 1000));
+      Thread.sleep((reloadInterval+ 1000));
 
       // Add another cert
       Map<String, X509Certificate> certs = new HashMap<String, X509Certificate>();
@@ -103,19 +110,19 @@ public class TestReloadingX509TrustManager {
       certs.put("cert2", cert2);
       createTrustStore(truststoreLocation, "password", certs);
 
-      // and wait to be sure reload has taken place
-      assertEquals(10, tm.getReloadInterval());
-
-      // Wait so that the file modification time is different
-      Thread.sleep((tm.getReloadInterval() + 200));
-
-      assertEquals(2, tm.getAcceptedIssuers().length);
+      GenericTestUtils.waitFor(new Supplier<Boolean>() {
+        @Override
+        public Boolean get() {
+          return tm.getAcceptedIssuers().length == 2;
+        }
+      }, (int) reloadInterval, 100000);
     } finally {
-      tm.destroy();
+      fileMonitoringTimer.cancel();
     }
   }
 
   @Test
+  @Timeout(value = 30)
   public void testReloadMissingTrustStore() throws Exception {
     KeyPair kp = generateKeyPair("RSA");
     cert1 = generateCertificate("CN=Cert1", kp, 30, "SHA1withRSA");
@@ -123,25 +130,40 @@ public class TestReloadingX509TrustManager {
     String truststoreLocation = BASEDIR + "/testmissing.jks";
     createTrustStore(truststoreLocation, "password", "cert1", cert1);
 
+    long reloadInterval = 10;
+    Timer fileMonitoringTimer = new Timer(FileBasedKeyStoresFactory.SSL_MONITORING_THREAD_NAME, true);
     ReloadingX509TrustManager tm =
-      new ReloadingX509TrustManager("jks", truststoreLocation, "password", 10);
+      new ReloadingX509TrustManager("jks", truststoreLocation, "password");
     try {
-      tm.init();
+      fileMonitoringTimer.schedule(new FileMonitoringTimerTask(
+              Paths.get(truststoreLocation), tm::loadFrom,null), reloadInterval, reloadInterval);
       assertEquals(1, tm.getAcceptedIssuers().length);
       X509Certificate cert = tm.getAcceptedIssuers()[0];
+
+      assertFalse(reloaderLog.getOutput().contains(
+              FileMonitoringTimerTask.PROCESS_ERROR_MESSAGE));
+
+      // Wait for the first reload to happen so we actually detect a change after the delete
+      Thread.sleep((reloadInterval+ 1000));
+
       new File(truststoreLocation).delete();
 
-      // Wait so that the file modification time is different
-      Thread.sleep((tm.getReloadInterval() + 200));
+      // Wait for the reload to happen and log to get written to
+      Thread.sleep((reloadInterval+ 1000));
+
+      waitForFailedReloadAtLeastOnce((int) reloadInterval);
 
       assertEquals(1, tm.getAcceptedIssuers().length);
       assertEquals(cert, tm.getAcceptedIssuers()[0]);
     } finally {
-      tm.destroy();
+      reloaderLog.stopCapturing();
+      fileMonitoringTimer.cancel();
     }
   }
 
+
   @Test
+  @Timeout(value = 30)
   public void testReloadCorruptTrustStore() throws Exception {
     KeyPair kp = generateKeyPair("RSA");
     cert1 = generateCertificate("CN=Cert1", kp, 30, "SHA1withRSA");
@@ -149,27 +171,67 @@ public class TestReloadingX509TrustManager {
     String truststoreLocation = BASEDIR + "/testcorrupt.jks";
     createTrustStore(truststoreLocation, "password", "cert1", cert1);
 
+    long reloadInterval = 10;
+    Timer fileMonitoringTimer = new Timer(FileBasedKeyStoresFactory.SSL_MONITORING_THREAD_NAME, true);
     ReloadingX509TrustManager tm =
-      new ReloadingX509TrustManager("jks", truststoreLocation, "password", 10);
+      new ReloadingX509TrustManager("jks", truststoreLocation, "password");
     try {
-      tm.init();
+      fileMonitoringTimer.schedule(new FileMonitoringTimerTask(
+              Paths.get(truststoreLocation), tm::loadFrom,null), reloadInterval, reloadInterval);
       assertEquals(1, tm.getAcceptedIssuers().length);
-      X509Certificate cert = tm.getAcceptedIssuers()[0];
+      final X509Certificate cert = tm.getAcceptedIssuers()[0];
 
+      // Wait so that the file modification time is different
+      Thread.sleep((reloadInterval + 1000));
+
+      assertFalse(reloaderLog.getOutput().contains(
+              FileMonitoringTimerTask.PROCESS_ERROR_MESSAGE));
       OutputStream os = new FileOutputStream(truststoreLocation);
       os.write(1);
       os.close();
-      new File(truststoreLocation).setLastModified(System.currentTimeMillis() -
-                                                   1000);
 
-      // Wait so that the file modification time is different
-      Thread.sleep((tm.getReloadInterval() + 200));
+      waitForFailedReloadAtLeastOnce((int) reloadInterval);
 
       assertEquals(1, tm.getAcceptedIssuers().length);
       assertEquals(cert, tm.getAcceptedIssuers()[0]);
     } finally {
-      tm.destroy();
+      reloaderLog.stopCapturing();
+      fileMonitoringTimer.cancel();
     }
   }
 
+  /**Wait for the reloader thread to load the configurations at least once
+   * by probing the log of the thread if the reload fails.
+   */
+  private void waitForFailedReloadAtLeastOnce(int reloadInterval)
+      throws InterruptedException, TimeoutException {
+    GenericTestUtils.waitFor(new Supplier<Boolean>() {
+      @Override
+      public Boolean get() {
+        return reloaderLog.getOutput().contains(
+            FileMonitoringTimerTask.PROCESS_ERROR_MESSAGE);
+      }
+    }, reloadInterval, 10 * 1000);
+  }
+
+  /** No password when accessing a trust store is legal. */
+  @Test
+  public void testNoPassword() throws Exception {
+    KeyPair kp = generateKeyPair("RSA");
+    cert1 = generateCertificate("CN=Cert1", kp, 30, "SHA1withRSA");
+    cert2 = generateCertificate("CN=Cert2", kp, 30, "SHA1withRSA");
+    String truststoreLocation = BASEDIR + "/testreload.jks";
+    createTrustStore(truststoreLocation, "password", "cert1", cert1);
+
+    Timer fileMonitoringTimer = new Timer(FileBasedKeyStoresFactory.SSL_MONITORING_THREAD_NAME, true);
+    final ReloadingX509TrustManager tm =
+        new ReloadingX509TrustManager("jks", truststoreLocation, null);
+    try {
+      fileMonitoringTimer.schedule(new FileMonitoringTimerTask(
+              Paths.get(truststoreLocation), tm::loadFrom,null), 10, 10);
+      assertEquals(1, tm.getAcceptedIssuers().length);
+    } finally {
+      fileMonitoringTimer.cancel();
+    }
+  }
 }

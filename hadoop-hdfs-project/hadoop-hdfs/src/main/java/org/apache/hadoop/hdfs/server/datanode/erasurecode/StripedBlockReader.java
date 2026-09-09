@@ -20,16 +20,19 @@ package org.apache.hadoop.hdfs.server.datanode.erasurecode;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.ChecksumException;
+import org.apache.hadoop.fs.StorageType;
 import org.apache.hadoop.hdfs.BlockReader;
 import org.apache.hadoop.hdfs.DFSUtilClient;
 import org.apache.hadoop.hdfs.DFSUtilClient.CorruptedBlocks;
-import org.apache.hadoop.hdfs.client.impl.BlockReaderRemote2;
+import org.apache.hadoop.hdfs.client.impl.BlockReaderRemote;
 import org.apache.hadoop.hdfs.net.Peer;
 import org.apache.hadoop.hdfs.protocol.DatanodeID;
 import org.apache.hadoop.hdfs.protocol.DatanodeInfo;
 import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
 import org.apache.hadoop.hdfs.security.token.block.BlockTokenIdentifier;
 import org.apache.hadoop.hdfs.server.datanode.DataNode;
+import org.apache.hadoop.hdfs.server.datanode.DataNodeFaultInjector;
+import org.apache.hadoop.hdfs.util.StripedBlockUtil.BlockReadStats;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.net.NetUtils;
 import org.apache.hadoop.security.token.Token;
@@ -65,6 +68,7 @@ class StripedBlockReader {
   private final DatanodeInfo source;
   private BlockReader blockReader;
   private ByteBuffer buffer;
+  private boolean isLocal;
 
   StripedBlockReader(StripedReader stripedReader, DataNode datanode,
                      Configuration conf, short index, ExtendedBlock block,
@@ -76,6 +80,7 @@ class StripedBlockReader {
     this.index = index;
     this.source = source;
     this.block = block;
+    this.isLocal = false;
 
     BlockReader tmpBlockReader = createBlockReader(offsetInBlock);
     if (tmpBlockReader != null) {
@@ -90,6 +95,11 @@ class StripedBlockReader {
     return buffer;
   }
 
+  void freeReadBuffer() {
+    DataNodeFaultInjector.get().interceptFreeBlockReaderBuffer();
+    buffer = null;
+  }
+
   void resetBlockReader(long offsetInBlock) {
     this.blockReader = createBlockReader(offsetInBlock);
   }
@@ -98,11 +108,13 @@ class StripedBlockReader {
     if (offsetInBlock >= block.getNumBytes()) {
       return null;
     }
+    Peer peer = null;
     try {
       InetSocketAddress dnAddr =
           stripedReader.getSocketAddress4Transfer(source);
       Token<BlockTokenIdentifier> blockToken = datanode.getBlockAccessToken(
-          block, EnumSet.of(BlockTokenIdentifier.AccessMode.READ));
+          block, EnumSet.of(BlockTokenIdentifier.AccessMode.READ),
+          StorageType.EMPTY_ARRAY, new String[0]);
         /*
          * This can be further improved if the replica is local, then we can
          * read directly from DN and need to check the replica is FINALIZED
@@ -112,14 +124,18 @@ class StripedBlockReader {
          *
          * TODO: add proper tracer
          */
-      return BlockReaderRemote2.newBlockReader(
+      peer = newConnectedPeer(block, dnAddr, blockToken, source);
+      if (peer.isLocal()) {
+        this.isLocal = true;
+      }
+      return BlockReaderRemote.newBlockReader(
           "dummy", block, blockToken, offsetInBlock,
-          block.getNumBytes() - offsetInBlock, true,
-          "", newConnectedPeer(block, dnAddr, blockToken, source), source,
-          null, stripedReader.getCachingStrategy(), datanode.getTracer(), -1);
+          block.getNumBytes() - offsetInBlock, true, "", peer, source,
+          null, stripedReader.getCachingStrategy(), -1, conf);
     } catch (IOException e) {
-      LOG.debug("Exception while creating remote block reader, datanode {}",
-          source, e);
+      LOG.info("Exception while creating remote block reader for {}, datanode {}",
+          block, source, e);
+      IOUtils.closeStream(peer);
       return null;
     }
   }
@@ -142,22 +158,21 @@ class StripedBlockReader {
       return peer;
     } finally {
       if (!success) {
-        IOUtils.cleanup(null, peer);
+        IOUtils.cleanupWithLogger(null, peer);
         IOUtils.closeSocket(sock);
       }
     }
   }
 
-  Callable<Void> readFromBlock(final int length,
+  Callable<BlockReadStats> readFromBlock(final int length,
                                final CorruptedBlocks corruptedBlocks) {
-    return new Callable<Void>() {
+    return new Callable<BlockReadStats>() {
 
       @Override
-      public Void call() throws Exception {
+      public BlockReadStats call() throws Exception {
         try {
           getReadBuffer().limit(length);
-          actualReadFromBlock();
-          return null;
+          return actualReadFromBlock();
         } catch (ChecksumException e) {
           LOG.warn("Found Checksum error for {} from {} at {}", block,
               source, e.getPos());
@@ -166,6 +181,8 @@ class StripedBlockReader {
         } catch (IOException e) {
           LOG.info(e.getMessage());
           throw e;
+        } finally {
+          DataNodeFaultInjector.get().interceptBlockReader();
         }
       }
     };
@@ -174,7 +191,8 @@ class StripedBlockReader {
   /**
    * Perform actual reading of bytes from block.
    */
-  private void actualReadFromBlock() throws IOException {
+  private BlockReadStats actualReadFromBlock() throws IOException {
+    DataNodeFaultInjector.get().delayBlockReader();
     int len = buffer.remaining();
     int n = 0;
     while (n < len) {
@@ -183,7 +201,10 @@ class StripedBlockReader {
         break;
       }
       n += nread;
+      stripedReader.getReconstructor().incrBytesRead(isLocal, nread);
     }
+    return new BlockReadStats(n, blockReader.isShortCircuit(),
+        blockReader.getNetworkDistance());
   }
 
   // close block reader

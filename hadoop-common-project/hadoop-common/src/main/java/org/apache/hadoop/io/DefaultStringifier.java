@@ -19,11 +19,10 @@
 package org.apache.hadoop.io;
 
 import java.io.IOException;
-import java.nio.charset.UnsupportedCharsetException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 
 import org.apache.commons.codec.binary.Base64;
-import org.apache.commons.io.Charsets;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.conf.Configuration;
@@ -75,14 +74,10 @@ public class DefaultStringifier<T> implements Stringifier<T> {
 
   @Override
   public T fromString(String str) throws IOException {
-    try {
-      byte[] bytes = Base64.decodeBase64(str.getBytes("UTF-8"));
-      inBuf.reset(bytes, bytes.length);
-      T restored = deserializer.deserialize(null);
-      return restored;
-    } catch (UnsupportedCharsetException ex) {
-      throw new IOException(ex.toString());
-    }
+    byte[] bytes = Base64.decodeBase64(str.getBytes(StandardCharsets.UTF_8));
+    inBuf.reset(bytes, bytes.length);
+    T restored = deserializer.deserialize(null);
+    return restored;
   }
 
   @Override
@@ -91,7 +86,7 @@ public class DefaultStringifier<T> implements Stringifier<T> {
     serializer.serialize(obj);
     byte[] buf = new byte[outBuf.getLength()];
     System.arraycopy(outBuf.getData(), 0, buf, 0, buf.length);
-    return new String(Base64.encodeBase64(buf), Charsets.UTF_8);
+    return new String(Base64.encodeBase64(buf), StandardCharsets.UTF_8);
   }
 
   @Override
@@ -158,6 +153,9 @@ public class DefaultStringifier<T> implements Stringifier<T> {
   public static <K> void storeArray(Configuration conf, K[] items,
       String keyName) throws IOException {
 
+    if (items.length == 0) {
+      throw new IndexOutOfBoundsException();
+    }
     DefaultStringifier<K> stringifier = new DefaultStringifier<K>(conf, 
         GenericsUtil.getClass(items[0]));
     try {

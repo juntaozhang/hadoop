@@ -25,31 +25,25 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.permission.FsAction;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.test.GenericTestUtils;
 import org.apache.hadoop.test.TestDirHelper;
-import org.junit.Assert;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.io.File;
-import java.net.URI;
-import java.net.URISyntaxException;
 
-@RunWith(value = Parameterized.class)
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
 public class TestHttpFSFileSystemLocalFileSystem extends BaseTestHttpFSWith {
 
   private static String PATH_PREFIX;
 
   static {
     new TestDirHelper();
-    String prefix =
-      System.getProperty("test.build.dir", "target/test-dir") + "/local";
-    File file = new File(prefix);
+    File file = GenericTestUtils.getTestDir("local");
     file.mkdirs();
     PATH_PREFIX = file.getAbsolutePath();
   }
 
-  public TestHttpFSFileSystemLocalFileSystem(Operation operation) {
-    super(operation);
+  public TestHttpFSFileSystemLocalFileSystem() {
   }
 
   @Override
@@ -89,7 +83,7 @@ public class TestHttpFSFileSystemLocalFileSystem extends BaseTestHttpFSWith {
       FileStatus status1 = fs.getFileStatus(path);
       fs.close();
       FsPermission permission2 = status1.getPermission();
-      Assert.assertEquals(permission2, permission1);
+      assertEquals(permission2, permission1);
 
       // sticky bit not supported on Windows with local file system, so the
       // subclass skips that part of the test

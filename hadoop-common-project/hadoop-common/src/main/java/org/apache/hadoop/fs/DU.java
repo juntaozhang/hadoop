@@ -17,7 +17,7 @@
  */
 package org.apache.hadoop.fs;
 
-import com.google.common.annotations.VisibleForTesting;
+import org.apache.hadoop.classification.VisibleForTesting;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.conf.Configuration;
@@ -31,26 +31,29 @@ import java.io.IOException;
 @InterfaceAudience.LimitedPrivate({"HDFS", "MapReduce"})
 @InterfaceStability.Evolving
 public class DU extends CachingGetSpaceUsed {
-  private DUShell duShell;
+  private final DUShell duShell;
 
   @VisibleForTesting
-   public DU(File path, long interval, long initialUsed) throws IOException {
-    super(path, interval, initialUsed);
+   public DU(File path, long interval, long jitter, long initialUsed)
+      throws IOException {
+    super(path, interval, jitter, initialUsed);
+    this.duShell = new DUShell();
   }
 
   public DU(CachingGetSpaceUsed.Builder builder) throws IOException {
-    this(builder.getPath(), builder.getInterval(), builder.getInitialUsed());
+    this(builder.getPath(),
+        builder.getInterval(),
+        builder.getJitter(),
+        builder.getInitialUsed());
   }
 
   @Override
   protected synchronized void refresh() {
-    if (duShell == null) {
-      duShell = new DUShell();
-    }
     try {
       duShell.startRefresh();
     } catch (IOException ioe) {
-      LOG.warn("Could not get disk usage information", ioe);
+      LOG.warn("Could not get disk usage information for path {}",
+          getDirPath(), ioe);
     }
   }
 

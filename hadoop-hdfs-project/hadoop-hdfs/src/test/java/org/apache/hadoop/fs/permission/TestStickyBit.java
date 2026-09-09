@@ -17,20 +17,22 @@
  */
 package org.apache.hadoop.fs.permission;
 
-import static org.apache.hadoop.fs.permission.AclEntryScope.*;
-import static org.apache.hadoop.fs.permission.AclEntryType.*;
-import static org.apache.hadoop.fs.permission.FsAction.*;
-import static org.apache.hadoop.hdfs.server.namenode.AclTestHelpers.*;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.apache.hadoop.fs.permission.AclEntryScope.ACCESS;
+import static org.apache.hadoop.fs.permission.AclEntryScope.DEFAULT;
+import static org.apache.hadoop.fs.permission.AclEntryType.USER;
+import static org.apache.hadoop.fs.permission.FsAction.ALL;
+import static org.apache.hadoop.hdfs.server.namenode.AclTestHelpers.aclEntry;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import java.io.IOException;
 import java.util.Arrays;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FSExceptionMessages;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -42,10 +44,13 @@ import org.apache.hadoop.hdfs.MiniDFSCluster;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.security.AccessControlException;
 import org.apache.hadoop.security.UserGroupInformation;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.apache.hadoop.test.GenericTestUtils;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class TestStickyBit {
 
@@ -53,6 +58,7 @@ public class TestStickyBit {
     UserGroupInformation.createUserForTesting("theDoctor", new String[] {"tardis"});
   static final UserGroupInformation user2 =
     UserGroupInformation.createUserForTesting("rose", new String[] {"powellestates"});
+  static final Logger LOG = LoggerFactory.getLogger(TestStickyBit.class);
 
   private static MiniDFSCluster cluster;
   private static Configuration conf;
@@ -60,7 +66,7 @@ public class TestStickyBit {
   private static FileSystem hdfsAsUser1;
   private static FileSystem hdfsAsUser2;
 
-  @BeforeClass
+  @BeforeAll
   public static void init() throws Exception {
     conf = new HdfsConfiguration();
     conf.setBoolean(DFSConfigKeys.DFS_PERMISSIONS_ENABLED_KEY, true);
@@ -79,7 +85,7 @@ public class TestStickyBit {
     assertTrue(hdfsAsUser2 instanceof DistributedFileSystem);
   }
 
-  @Before
+  @BeforeEach
   public void setup() throws Exception {
     if (hdfs != null) {
       for (FileStatus stat: hdfs.listStatus(new Path("/"))) {
@@ -88,9 +94,9 @@ public class TestStickyBit {
     }
   }
 
-  @AfterClass
+  @AfterAll
   public static void shutdown() throws Exception {
-    IOUtils.cleanup(null, hdfs, hdfsAsUser1, hdfsAsUser2);
+    IOUtils.cleanupWithLogger(null, hdfs, hdfsAsUser1, hdfsAsUser2);
     if (cluster != null) {
       cluster.shutdown();
     }
@@ -115,7 +121,7 @@ public class TestStickyBit {
       h.close();
       h = null;
     } finally {
-      IOUtils.cleanup(null, h);
+      IOUtils.cleanupWithLogger(null, h);
     }
   }
 
@@ -344,6 +350,52 @@ public class TestStickyBit {
     assertFalse(hdfs.getFileStatus(sbSetOff).getPermission().getStickyBit());
   }
 
+  /**
+   * Sticky bit set on a directory can be reset either explicitly (like 0777)
+   * or by omitting the bit (like 777) in the permission. Ensure that the
+   * directory gets its sticky bit reset whenever it is omitted in permission.
+   */
+  @Test
+  public void testStickyBitReset() throws Exception {
+    Path sbExplicitTestDir = new Path("/DirToTestExplicitStickyBit");
+    Path sbOmittedTestDir = new Path("/DirToTestOmittedStickyBit");
+
+    // Creation of directories and verification of their existence
+    hdfs.mkdirs(sbExplicitTestDir);
+    hdfs.mkdirs(sbOmittedTestDir);
+    assertTrue(hdfs.exists(sbExplicitTestDir));
+    assertTrue(hdfs.exists(sbOmittedTestDir));
+
+    // Setting sticky bit explicitly on sbExplicitTestDir and verification
+    hdfs.setPermission(sbExplicitTestDir, new FsPermission((short) 01777));
+    LOG.info("Dir: {}, permission: {}", sbExplicitTestDir.getName(),
+            hdfs.getFileStatus(sbExplicitTestDir).getPermission());
+    assertTrue(hdfs.getFileStatus(sbExplicitTestDir).
+                  getPermission().getStickyBit());
+
+    // Sticky bit omitted on sbOmittedTestDir should behave like reset
+    hdfs.setPermission(sbOmittedTestDir, new FsPermission((short) 0777));
+    LOG.info("Dir: {}, permission: {}", sbOmittedTestDir.getName(),
+            hdfs.getFileStatus(sbOmittedTestDir).getPermission());
+    assertFalse(
+        hdfs.getFileStatus(sbOmittedTestDir).getPermission().getStickyBit());
+
+    // Resetting sticky bit explicitly on sbExplicitTestDir and verification
+    hdfs.setPermission(sbExplicitTestDir, new FsPermission((short) 00777));
+    LOG.info("Dir: {}, permission: {}", sbExplicitTestDir.getName(),
+            hdfs.getFileStatus(sbExplicitTestDir).getPermission());
+    assertFalse(
+        hdfs.getFileStatus(sbExplicitTestDir).getPermission().getStickyBit());
+
+    // Set the sticky bit and reset again by omitting in the permission
+    hdfs.setPermission(sbOmittedTestDir, new FsPermission((short) 01777));
+    hdfs.setPermission(sbOmittedTestDir, new FsPermission((short) 0777));
+    LOG.info("Dir: {}, permission: {}", sbOmittedTestDir.getName(),
+            hdfs.getFileStatus(sbOmittedTestDir).getPermission());
+    assertFalse(
+        hdfs.getFileStatus(sbOmittedTestDir).getPermission().getStickyBit());
+  }
+
   @Test
   public void testAclStickyBitPersistence() throws Exception {
     // A tale of three directories...
@@ -376,6 +428,67 @@ public class TestStickyBit {
     assertFalse(hdfs.getFileStatus(sbSetOff).getPermission().getStickyBit());
   }
 
+  @Test
+  public void testStickyBitRecursiveDeleteFile() throws Exception {
+    Path root = new Path("/" + GenericTestUtils.getMethodName());
+    Path tmp = new Path(root, "tmp");
+    Path file = new Path(tmp, "file");
+
+    // Create a tmp directory with wide-open permissions and sticky bit
+    hdfs.mkdirs(tmp);
+    hdfs.setPermission(root, new FsPermission((short) 0777));
+    hdfs.setPermission(tmp, new FsPermission((short) 01777));
+
+    // Create a file protected by sticky bit
+    writeFile(hdfsAsUser1, file);
+    hdfs.setPermission(file, new FsPermission((short) 0666));
+
+    try {
+      hdfsAsUser2.delete(tmp, true);
+      fail("Non-owner can not delete a file protected by sticky bit"
+          + " recursively");
+    } catch (AccessControlException e) {
+      GenericTestUtils.assertExceptionContains(
+          FSExceptionMessages.PERMISSION_DENIED_BY_STICKY_BIT, e);
+    }
+
+    // Owner can delete a file protected by sticky bit recursively
+    hdfsAsUser1.delete(tmp, true);
+  }
+
+  @Test
+  public void testStickyBitRecursiveDeleteDir() throws Exception {
+    Path root = new Path("/" + GenericTestUtils.getMethodName());
+    Path tmp = new Path(root, "tmp");
+    Path dir = new Path(tmp, "dir");
+    Path file = new Path(dir, "file");
+
+    // Create a tmp directory with wide-open permissions and sticky bit
+    hdfs.mkdirs(tmp);
+    hdfs.setPermission(root, new FsPermission((short) 0777));
+    hdfs.setPermission(tmp, new FsPermission((short) 01777));
+
+    // Create a dir protected by sticky bit
+    hdfsAsUser1.mkdirs(dir);
+    hdfsAsUser1.setPermission(dir, new FsPermission((short) 0777));
+
+    // Create a file in dir
+    writeFile(hdfsAsUser1, file);
+    hdfs.setPermission(file, new FsPermission((short) 0666));
+
+    try {
+      hdfsAsUser2.delete(tmp, true);
+      fail("Non-owner can not delete a directory protected by sticky bit"
+          + " recursively");
+    } catch (AccessControlException e) {
+      GenericTestUtils.assertExceptionContains(
+          FSExceptionMessages.PERMISSION_DENIED_BY_STICKY_BIT, e);
+    }
+
+    // Owner can delete a directory protected by sticky bit recursively
+    hdfsAsUser1.delete(tmp, true);
+  }
+
   /***
    * Write a quick file to the specified file system at specified path
    */
@@ -387,7 +500,7 @@ public class TestStickyBit {
       o.close();
       o = null;
     } finally {
-      IOUtils.cleanup(null, o);
+      IOUtils.cleanupWithLogger(null, o);
     }
   }
 

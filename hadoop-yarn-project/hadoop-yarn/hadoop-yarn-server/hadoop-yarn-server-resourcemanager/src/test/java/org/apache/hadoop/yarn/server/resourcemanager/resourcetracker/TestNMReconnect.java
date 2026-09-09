@@ -18,17 +18,17 @@
 
 package org.apache.hadoop.yarn.server.resourcemanager.resourcetracker;
 
+import static org.apache.hadoop.yarn.server.resourcemanager.MockNM.createMockNodeStatus;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-
-import org.apache.hadoop.yarn.api.records.NodeState;
-import org.apache.hadoop.yarn.event.DrainDispatcher;
-import org.apache.hadoop.yarn.server.resourcemanager.MockNM;
-import org.apache.hadoop.yarn.server.resourcemanager.MockRM;
-import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNode;
-import org.junit.Assert;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.yarn.api.records.NodeId;
+import org.apache.hadoop.yarn.api.records.NodeState;
 import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.conf.ConfigurationProvider;
 import org.apache.hadoop.yarn.conf.ConfigurationProviderFactory;
@@ -39,32 +39,48 @@ import org.apache.hadoop.yarn.event.InlineDispatcher;
 import org.apache.hadoop.yarn.factories.RecordFactory;
 import org.apache.hadoop.yarn.factory.providers.RecordFactoryProvider;
 import org.apache.hadoop.yarn.server.api.protocolrecords.RegisterNodeManagerRequest;
+import org.apache.hadoop.yarn.server.api.protocolrecords.RegisterNodeManagerResponse;
+import org.apache.hadoop.yarn.server.api.records.NodeAction;
+import org.apache.hadoop.yarn.server.api.records.NodeStatus;
+import org.apache.hadoop.yarn.server.resourcemanager.MockNM;
+import org.apache.hadoop.yarn.server.resourcemanager.MockRM;
+import org.apache.hadoop.yarn.server.resourcemanager.ParameterizedSchedulerTestBase;
 import org.apache.hadoop.yarn.server.resourcemanager.NMLivelinessMonitor;
 import org.apache.hadoop.yarn.server.resourcemanager.nodelabels.RMNodeLabelsManager;
 import org.apache.hadoop.yarn.server.resourcemanager.NodesListManager;
-import org.apache.hadoop.yarn.server.resourcemanager.RMContext;
 import org.apache.hadoop.yarn.server.resourcemanager.RMContextImpl;
 import org.apache.hadoop.yarn.server.resourcemanager.ResourceManager.NodeEventDispatcher;
 import org.apache.hadoop.yarn.server.resourcemanager.ResourceTrackerService;
+import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNode;
 import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNodeEvent;
 import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNodeEventType;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.AbstractYarnScheduler;
-import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacityScheduler;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.SchedulerEventType;
 import org.apache.hadoop.yarn.server.resourcemanager.security.NMTokenSecretManagerInRM;
 import org.apache.hadoop.yarn.server.resourcemanager.security.RMContainerTokenSecretManager;
-import org.apache.hadoop.yarn.server.utils.BuilderUtils;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.apache.hadoop.yarn.util.resource.Resources;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
-public class TestNMReconnect {
+/**
+ * TestNMReconnect run tests against the scheduler set by
+ * {@link ParameterizedSchedulerTestBase} which is configured
+ * in {@link YarnConfiguration}.
+ */
+public class TestNMReconnect extends ParameterizedSchedulerTestBase {
   private static final RecordFactory recordFactory = 
       RecordFactoryProvider.getRecordFactory(null);
 
   private List<RMNodeEvent> rmNodeEvents = new ArrayList<RMNodeEvent>();
   private Dispatcher dispatcher;
   private RMContextImpl context;
+
+  public void initTestNMReconnect(SchedulerType type) throws IOException {
+    initParameterizedSchedulerTestBase(type);
+    setUp();
+  }
 
   private class TestRMNodeEventDispatcher implements
       EventHandler<RMNodeEvent> {
@@ -78,7 +94,6 @@ public class TestNMReconnect {
 
   ResourceTrackerService resourceTrackerService;
 
-  @Before
   public void setUp() {
     Configuration conf = new Configuration();
     // Dispatcher that processes events inline
@@ -113,15 +128,17 @@ public class TestNMReconnect {
     resourceTrackerService.start();
   }
 
-  @After
+  @AfterEach
   public void tearDown() {
     resourceTrackerService.stop();
   }
 
-  @Test
-  public void testReconnect() throws Exception {
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("getParameters")
+  public void testReconnect(SchedulerType type) throws Exception {
+    initTestNMReconnect(type);
     String hostname1 = "localhost1";
-    Resource capability = BuilderUtils.newResource(1024, 1);
+    Resource capability = Resources.createResource(1024);
 
     RegisterNodeManagerRequest request1 = recordFactory
         .newRecordInstance(RegisterNodeManagerRequest.class);
@@ -131,26 +148,27 @@ public class TestNMReconnect {
     request1.setResource(capability);
     resourceTrackerService.registerNodeManager(request1);
 
-    Assert.assertEquals(RMNodeEventType.STARTED, rmNodeEvents.get(0).getType());
+    assertEquals(RMNodeEventType.STARTED, rmNodeEvents.get(0).getType());
 
     rmNodeEvents.clear();
     resourceTrackerService.registerNodeManager(request1);
-    Assert.assertEquals(RMNodeEventType.RECONNECTED,
+    assertEquals(RMNodeEventType.RECONNECTED,
         rmNodeEvents.get(0).getType());
 
     rmNodeEvents.clear();
     resourceTrackerService.registerNodeManager(request1);
-    capability = BuilderUtils.newResource(1024, 2);
+    capability = Resources.createResource(1024, 2);
     request1.setResource(capability);
-    Assert.assertEquals(RMNodeEventType.RECONNECTED,
+    assertEquals(RMNodeEventType.RECONNECTED,
         rmNodeEvents.get(0).getType());
   }
 
-  @Test
-  public void testCompareRMNodeAfterReconnect() throws Exception {
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("getParameters")
+  public void testCompareRMNodeAfterReconnect(SchedulerType type) throws Exception {
+    initTestNMReconnect(type);
+    AbstractYarnScheduler scheduler = getScheduler();
     Configuration yarnConf = new YarnConfiguration();
-    CapacityScheduler scheduler = new CapacityScheduler();
-    scheduler.setConf(yarnConf);
     ConfigurationProvider configurationProvider =
         ConfigurationProviderFactory.getConfigurationProvider(yarnConf);
     configurationProvider.init(yarnConf);
@@ -165,56 +183,85 @@ public class TestNMReconnect {
     dispatcher.register(SchedulerEventType.class, scheduler);
 
     String hostname1 = "localhost1";
-    Resource capability = BuilderUtils.newResource(4096, 4);
+    Resource capability = Resources.createResource(4096, 4);
 
     RegisterNodeManagerRequest request1 = recordFactory
         .newRecordInstance(RegisterNodeManagerRequest.class);
     NodeId nodeId1 = NodeId.newInstance(hostname1, 0);
+
+    NodeStatus mockNodeStatus = createMockNodeStatus();
+
     request1.setNodeId(nodeId1);
     request1.setHttpPort(0);
     request1.setResource(capability);
+    request1.setNodeStatus(mockNodeStatus);
     resourceTrackerService.registerNodeManager(request1);
-    Assert.assertNotNull(context.getRMNodes().get(nodeId1));
+    assertNotNull(context.getRMNodes().get(nodeId1));
     // verify Scheduler and RMContext use same RMNode reference.
-    Assert.assertTrue(scheduler.getSchedulerNode(nodeId1).getRMNode() ==
+    assertTrue(scheduler.getSchedulerNode(nodeId1).getRMNode() ==
         context.getRMNodes().get(nodeId1));
-    Assert.assertEquals(context.getRMNodes().get(nodeId1).
+    assertEquals(context.getRMNodes().get(nodeId1).
         getTotalCapability(), capability);
-    Resource capability1 = BuilderUtils.newResource(2048, 2);
+    Resource capability1 = Resources.createResource(2048, 2);
     request1.setResource(capability1);
     resourceTrackerService.registerNodeManager(request1);
-    Assert.assertNotNull(context.getRMNodes().get(nodeId1));
+    assertNotNull(context.getRMNodes().get(nodeId1));
     // verify Scheduler and RMContext use same RMNode reference
     // after reconnect.
-    Assert.assertTrue(scheduler.getSchedulerNode(nodeId1).getRMNode() ==
+    assertTrue(scheduler.getSchedulerNode(nodeId1).getRMNode() ==
         context.getRMNodes().get(nodeId1));
     // verify RMNode's capability is changed.
-    Assert.assertEquals(context.getRMNodes().get(nodeId1).
+    assertEquals(context.getRMNodes().get(nodeId1).
         getTotalCapability(), capability1);
     nlm.stop();
     scheduler.stop();
   }
 
-  @Test(timeout = 10000)
-  public void testRMNodeStatusAfterReconnect() throws Exception {
+  @SuppressWarnings("unchecked")
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("getParameters")
+  @Timeout(10)
+  public void testDecommissioningNodeReconnect(SchedulerType type) throws Exception {
+    initTestNMReconnect(type);
+
+    MockRM rm = new MockRM();
+    rm.start();
+    MockNM nm1 =
+        new MockNM("127.0.0.1:1234", 15120, rm.getResourceTrackerService());
+    nm1.registerNode();
+    rm.waitForState(nm1.getNodeId(), NodeState.RUNNING);
+
+    rm.getRMContext().getDispatcher().getEventHandler().handle(
+        new RMNodeEvent(nm1.getNodeId(),
+            RMNodeEventType.GRACEFUL_DECOMMISSION));
+    rm.waitForState(nm1.getNodeId(), NodeState.DECOMMISSIONING);
+
+    MockNM nm2 =
+        new MockNM("127.0.0.1:1234", 15120, rm.getResourceTrackerService());
+    RegisterNodeManagerResponse response = nm2.registerNode();
+    // not SHUTDOWN
+    assertTrue(response.getNodeAction().equals(NodeAction.NORMAL));
+    rm.stop();
+  }
+
+  @Timeout(10)
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("getParameters")
+  public void testRMNodeStatusAfterReconnect(SchedulerType type) throws Exception {
+    initTestNMReconnect(type);
     // The node(127.0.0.1:1234) reconnected with RM. When it registered with
     // RM, RM set its lastNodeHeartbeatResponse's id to 0 asynchronously. But
     // the node's heartbeat come before RM succeeded setting the id to 0.
-    final DrainDispatcher dispatcher = new DrainDispatcher();
-    MockRM rm = new MockRM(){
-      @Override
-      protected Dispatcher createDispatcher() {
-        return dispatcher;
-      }
-    };
+    MockRM rm = new MockRM();
     rm.start();
+
     MockNM nm1 =
         new MockNM("127.0.0.1:1234", 15120, rm.getResourceTrackerService());
     nm1.registerNode();
     int i = 0;
     while(i < 3) {
       nm1.nodeHeartbeat(true);
-      dispatcher.await();
+      rm.drainEvents();
       i++;
     }
 
@@ -223,9 +270,8 @@ public class TestNMReconnect {
     nm2.registerNode();
     RMNode rmNode = rm.getRMContext().getRMNodes().get(nm2.getNodeId());
     nm2.nodeHeartbeat(true);
-    dispatcher.await();
-    Assert.assertEquals("Node is Not in Running state.", NodeState.RUNNING,
-        rmNode.getState());
+    rm.drainEvents();
+    assertEquals(NodeState.RUNNING, rmNode.getState(), "Node is Not in Running state.");
     rm.stop();
   }
 }

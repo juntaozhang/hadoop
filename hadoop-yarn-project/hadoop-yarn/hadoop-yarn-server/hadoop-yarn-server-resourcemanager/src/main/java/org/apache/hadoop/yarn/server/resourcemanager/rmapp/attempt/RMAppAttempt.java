@@ -190,7 +190,7 @@ public interface RMAppAttempt extends EventHandler<RMAppAttemptEvent> {
    * Get the {@link BlacklistManager} that manages blacklists for AM failures
    * @return the {@link BlacklistManager} that tracks AM failures.
    */
-  BlacklistManager getAMBlacklist();
+  BlacklistManager getAMBlacklistManager();
 
   /**
    * the start time of the application.
@@ -205,6 +205,14 @@ public interface RMAppAttempt extends EventHandler<RMAppAttemptEvent> {
    *         attempt.
    */
   RMAppAttemptState getState();
+
+  /**
+   * The previous state of the {@link RMAppAttempt} before the current state.
+   *
+   * @return the previous state of the {@link RMAppAttempt} before the current state
+   * for this application attempt.
+   */
+  RMAppAttemptState getPreviousState();
 
   /**
    * Create the external user-facing state of the attempt of ApplicationMaster
@@ -233,6 +241,8 @@ public interface RMAppAttempt extends EventHandler<RMAppAttemptEvent> {
    *   </li>
    *   <li>killed by RM because of RM restart or failover.</li>
    * </ul>
+   *
+   * @return attempt retry count.
    */
   boolean shouldCountTowardsMaxAttemptRetry();
   
@@ -250,7 +260,7 @@ public interface RMAppAttempt extends EventHandler<RMAppAttemptEvent> {
 
   /**
    * To capture Launch diagnostics of the app.
-   * @param amLaunchDiagnostics
+   * @param amLaunchDiagnostics amLaunchDiagnostics.
    */
   void updateAMLaunchDiagnostics(String amLaunchDiagnostics);
 
