@@ -154,6 +154,7 @@ import org.apache.hadoop.hdfs.server.common.HdfsServerConstants.NamenodeRole;
 import org.apache.hadoop.hdfs.server.common.HttpGetFailedException;
 import org.apache.hadoop.hdfs.server.common.IncorrectVersionException;
 import org.apache.hadoop.hdfs.server.namenode.NameNode.OperationCategory;
+import org.apache.hadoop.hdfs.server.namenode.ha.ClientProtocolReadOnlyClassifier;
 import org.apache.hadoop.hdfs.server.namenode.metrics.NameNodeMetrics;
 import org.apache.hadoop.hdfs.server.protocol.BlockReportContext;
 import org.apache.hadoop.hdfs.server.protocol.BlocksWithLocations;
@@ -455,6 +456,11 @@ public class NameNodeRpcServer implements NamenodeProtocols {
         .setVerbose(false)
         .setSecretManager(namesystem.getDelegationTokenSecretManager())
         .build();
+
+    // Classify ClientProtocol calls as read or write so that downstream
+    // components (e.g. a read/write call queue) can schedule them accordingly.
+    clientRpcServer.setReadOnlyCallClassifier(
+        new ClientProtocolReadOnlyClassifier());
 
     // Add all the RPC protocols that the namenode implements
     DFSUtil.addPBProtocol(conf, HAServiceProtocolPB.class, haPbService,

@@ -18,25 +18,20 @@
 
 package org.apache.hadoop.ipc;
 
-import org.apache.hadoop.classification.InterfaceAudience;
-import org.apache.hadoop.security.UserGroupInformation;
+/** MXBean exposed by {@link ReadWriteCallQueue}. */
+public interface ReadWriteCallQueueMXBean {
+  /** Current number of read calls queued. */
+  int getReadQueueSize();
 
-/**
- * Interface which allows extracting information necessary to
- * create schedulable identity strings.
- */
-@InterfaceAudience.Private
-public interface Schedulable {
-  public UserGroupInformation getUserGroupInformation();
+  /** Current number of write calls queued. */
+  int getWriteQueueSize();
 
-  int getPriorityLevel();
+  /** Number of times the scheduler entered the read phase. */
+  long getReadPhaseCount();
 
-  /**
-   * Whether this call is a write (mutating) operation. Read-only calls return
-   * false. Used by queues such as {@link ReadWriteCallQueue} to split and
-   * schedule RPC calls.
-   */
-  default boolean isWrite() {
-    return true;
-  }
+  /** Number of times the scheduler entered the write phase. */
+  long getWritePhaseCount();
+
+  /** Revision number bumped whenever the underlying queue is replaced. */
+  int getRevision();
 }
