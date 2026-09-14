@@ -438,6 +438,12 @@ public abstract class Server {
   volatile private boolean running = true;         // true while server runs
   private CallQueueManager<Call> callQueue;
 
+  /**
+   * Optional classifier used to decide whether an incoming RPC is read-only.
+   * When null, every call is conservatively treated as a write.
+   */
+  private ReadOnlyCallClassifier readOnlyCallClassifier;
+
   // maintains the set of client connections and handles idle timeouts
   private ConnectionManager connectionManager;
   private Listener listener = null;
@@ -690,6 +696,8 @@ public abstract class Server {
     private boolean deferredResponse = false;
     private int priorityLevel;
     // the priority level assigned by scheduler, 0 by default
+    private boolean write = true;
+    // whether the call is a write or a read; conservative default is write
 
     Call() {
       this(RpcConstants.INVALID_CALL_ID, RpcConstants.INVALID_RETRY_COUNT,
@@ -795,6 +803,18 @@ public abstract class Server {
 
     public void setPriorityLevel(int priorityLevel) {
       this.priorityLevel = priorityLevel;
+    }
+
+    public void setWrite(boolean write) {
+      this.write = write;
+    }
+
+    public boolean isWrite() {
+      return write;
+    }
+
+    public boolean isRead() {
+      return !write;
     }
 
     @InterfaceStability.Unstable
@@ -2482,6 +2502,11 @@ public abstract class Server {
       // Save the priority level assignment by the scheduler
       call.setPriorityLevel(callQueue.getPriorityLevel(call));
 
+      // Determine whether this call is a read or a write based on the RPC
+      // method. Calls that cannot be classified are conservatively treated as
+      // writes.
+      call.setWrite(isWriteCall(rpcRequest));
+
       try {
         internalQueueCall(call);
       } catch (RpcServerException rse) {
@@ -2491,6 +2516,36 @@ public abstract class Server {
             RpcErrorCodeProto.ERROR_RPC_SERVER, ioe);
       }
       incRpcCount();  // Increment the rpc count
+    }
+
+    /**
+     * Decide whether an RPC request is a write. The decision is delegated to
+     * the configured {@link ReadOnlyCallClassifier}; when none is set, or the
+     * request is not a protobuf RPC, or header parsing fails, the call is
+     * conservatively treated as a write.
+     *
+     * @param rpcRequest the deserialized RPC request payload
+     * @return {@code true} if the call is a write,
+     *         {@code false} if it is a read
+     */
+    private boolean isWriteCall(Writable rpcRequest) {
+      if (readOnlyCallClassifier == null) {
+        return true;
+      }
+      if (!(rpcRequest instanceof ProtobufRpcEngine.RpcProtobufRequest)) {
+        return true;
+      }
+      try {
+        ProtobufRpcEngine.RpcProtobufRequest req =
+            (ProtobufRpcEngine.RpcProtobufRequest) rpcRequest;
+        String methodName = req.getRequestHeader().getMethodName();
+        String protoName =
+            req.getRequestHeader().getDeclaringClassProtocolName();
+        return !readOnlyCallClassifier.isReadOnly(protoName, methodName);
+      } catch (IOException ioe) {
+        LOG.warn("Failed to determine if call is write", ioe);
+      }
+      return true;
     }
 
     /**
@@ -3195,6 +3250,14 @@ public abstract class Server {
    */
   public int getCallQueueLen() {
     return callQueue.size();
+  }
+
+  /**
+   * Configure the classifier used to determine whether an incoming RPC is
+   * read-only. When unset, every call is conservatively treated as a write.
+   */
+  public void setReadOnlyCallClassifier(ReadOnlyCallClassifier classifier) {
+    this.readOnlyCallClassifier = classifier;
   }
 
   public boolean isClientBackoffEnabled() {
