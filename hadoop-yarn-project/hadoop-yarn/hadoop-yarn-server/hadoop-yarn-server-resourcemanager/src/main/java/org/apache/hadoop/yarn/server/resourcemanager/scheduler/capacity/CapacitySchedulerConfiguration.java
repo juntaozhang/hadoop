@@ -336,6 +336,18 @@ public class CapacitySchedulerConfiguration extends ReservationSchedulerConfigur
   @Private
   public static final int DEFAULT_MAX_ASSIGN_PER_HEARTBEAT = -1;
 
+  /**
+   * When a node partition is NON_EXCLUSIVE, cap DEFAULT-partition borrowing by
+   * each queue's max capacity on that label (instead of the whole partition).
+   */
+  @Private
+  public static final String NON_EXCLUSIVE_LABEL_QUEUE_LIMIT_ENABLE =
+      PREFIX + "non-exclusive-label.queue-limit-enable";
+
+  @Private
+  public static final boolean
+      DEFAULT_NON_EXCLUSIVE_LABEL_QUEUE_LIMIT_ENABLE = false;
+
   /** Configuring absolute min/max resources in a queue. **/
   @Private
   public static final String MINIMUM_RESOURCE = "min-resource";
@@ -1640,6 +1652,11 @@ public class CapacitySchedulerConfiguration extends ReservationSchedulerConfigur
 
   public boolean getAssignMultipleEnabled() {
     return getBoolean(ASSIGN_MULTIPLE_ENABLED, DEFAULT_ASSIGN_MULTIPLE_ENABLED);
+  }
+
+  public boolean getNonExclusiveLabelQueueLimitEnable() {
+    return getBoolean(NON_EXCLUSIVE_LABEL_QUEUE_LIMIT_ENABLE,
+        DEFAULT_NON_EXCLUSIVE_LABEL_QUEUE_LIMIT_ENABLE);
   }
 
   public int getMaxAssignPerHeartbeat() {

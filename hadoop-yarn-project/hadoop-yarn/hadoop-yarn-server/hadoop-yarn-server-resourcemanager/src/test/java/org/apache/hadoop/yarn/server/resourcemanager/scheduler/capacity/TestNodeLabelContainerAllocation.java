@@ -1233,7 +1233,91 @@ public class TestNodeLabelContainerAllocation {
 
     rm1.close();
   }
-  
+
+  @Test
+  public void
+      testQueueMaxCapacitiesWillBeHonoredWhenRespectingExclusivityInIgnoreMode()
+          throws Exception {
+    /**
+     * Like testQueueMaxCapacitiesWillNotBeHonoredWhenNotRespectingExclusivity
+     * but with non-exclusive-label.queue-limit-enable enabled: app in a is
+     * bounded by max-capacity-on-x (50% of 10GB => 5 containers), not 10.
+     */
+
+    CapacitySchedulerConfiguration csConf =
+        new CapacitySchedulerConfiguration(this.conf);
+
+    csConf.set(CapacitySchedulerConfiguration
+        .NON_EXCLUSIVE_LABEL_QUEUE_LIMIT_ENABLE, "true");
+
+    // Define top-level queues
+    csConf.setQueues(CapacitySchedulerConfiguration.ROOT, new String[] {"a",
+        "b" });
+    csConf.setCapacityByLabel(CapacitySchedulerConfiguration.ROOT, "x", 100);
+
+    final String queueA = CapacitySchedulerConfiguration.ROOT + ".a";
+    csConf.setCapacity(queueA, 50);
+    csConf.setAccessibleNodeLabels(queueA, toSet("x"));
+    csConf.setCapacityByLabel(queueA, "x", 50);
+    csConf.setMaximumCapacityByLabel(queueA, "x", 50);
+    csConf.setUserLimit(queueA, 200);
+
+    final String queueB = CapacitySchedulerConfiguration.ROOT + ".b";
+    csConf.setCapacity(queueB, 50);
+    csConf.setAccessibleNodeLabels(queueB, toSet("x"));
+    csConf.setCapacityByLabel(queueB, "x", 50);
+    csConf.setMaximumCapacityByLabel(queueB, "x", 50);
+    csConf.setUserLimit(queueB, 200);
+
+    // set node -> label
+    mgr.addToCluserNodeLabels(ImmutableSet.of(
+        NodeLabel.newInstance("x", false)));
+    mgr.addLabelsToNode(ImmutableMap.of(
+        NodeId.newInstance("h1", 0), toSet("x")));
+
+    // inject node label manager
+    MockRM rm1 = new MockRM(csConf) {
+      @Override
+      public RMNodeLabelsManager createNodeLabelManager() {
+        return mgr;
+      }
+    };
+
+    rm1.getRMContext().setNodeLabelManager(mgr);
+    rm1.start();
+    MockNM nm1 = rm1.registerNode("h1:1234", 10 * GB); // label = x
+    MockNM nm2 = rm1.registerNode("h2:1234", 10 * GB); // label = <empty>
+
+    // app1 -> a
+    RMApp app1 = rm1.submitApp(1 * GB, "app", "user", null, "a");
+    MockAM am1 = MockRM.launchAndRegisterAM(app1, rm1, nm2);
+
+    // app1 asks for 10 partition= containers
+    am1.allocate("*", 1 * GB, 10, new ArrayList<ContainerId>());
+
+    // Only NM1 (the non-exclusive x node) heartbeats, so DEFAULT requests spill
+    // onto x's idle resources via the IGNORE_PARTITION_EXCLUSIVITY pass.
+    CapacityScheduler cs = (CapacityScheduler) rm1.getResourceScheduler();
+    RMNode rmNode1 = rm1.getRMContext().getRMNodes().get(nm1.getNodeId());
+
+    SchedulerNode schedulerNode1 = cs.getSchedulerNode(nm1.getNodeId());
+
+    cs.handle(new NodeUpdateSchedulerEvent(rmNode1));
+    for (int i = 0; i < 50; i++) {
+      cs.handle(new NodeUpdateSchedulerEvent(rmNode1));
+    }
+
+    // app1 is bounded by max-capacity-on-x (50% of 10GB = 5GB => 5 containers)
+    Assert.assertEquals(5, schedulerNode1.getNumContainers());
+
+    // the borrowed containers are still tracked as non-exclusive
+    LeafQueue leafQueue = (LeafQueue) cs.getQueue("a");
+    Assert.assertEquals(5,
+        leafQueue.getIgnoreExclusivityRMContainers().get("x").size());
+
+    rm1.close();
+  }
+
   private void checkQueueUsedCapacity(String queueName, CapacityScheduler cs,
       String nodePartition, float usedCapacity, float absoluteUsedCapacity) {
     float epsilon = 1e-6f;

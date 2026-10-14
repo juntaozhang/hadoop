@@ -863,9 +863,16 @@ public abstract class AbstractCSQueue implements CSQueue {
       return Resources.min(resourceCalculator, clusterResource,
           queueMaxResource, currentResourceLimits.getLimit());
     } else if (schedulingMode == SchedulingMode.IGNORE_PARTITION_EXCLUSIVITY) {
-      // When we doing non-exclusive resource allocation, maximum capacity of
-      // all queues on this label equals to total resource with the label.
-      return labelManager.getResourceByLabel(nodePartition, clusterResource);
+      // Borrow idle of the label. When the switch is on, cap by this queue's
+      // max capacity on the label (same as RESPECT mode).
+      Resource labelTotal =
+          labelManager.getResourceByLabel(nodePartition, clusterResource);
+      if (isNonExclusiveLabelQueueLimitEnabled()) {
+        Resource queueMax = getQueueMaxResource(nodePartition);
+        return Resources.min(resourceCalculator, clusterResource,
+            labelTotal, queueMax);
+      }
+      return labelTotal;
     }
     
     return Resources.none();
@@ -873,6 +880,11 @@ public abstract class AbstractCSQueue implements CSQueue {
 
   Resource getQueueMaxResource(String nodePartition) {
     return getEffectiveMaxCapacity(nodePartition);
+  }
+
+  boolean isNonExclusiveLabelQueueLimitEnabled() {
+    return csContext.getConfiguration()
+        .getNonExclusiveLabelQueueLimitEnable();
   }
 
   public boolean hasChildQueues() {

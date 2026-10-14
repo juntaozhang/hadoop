@@ -30,6 +30,8 @@ Now we only support node partition, which is:
     * Exclusive: containers will be allocated to nodes with exactly match node partition. (e.g. asking partition=“x” will be allocated to node with partition=“x”, asking DEFAULT partition will be allocated to DEFAULT partition nodes).
     * Non-exclusive: if a partition is non-exclusive, it shares idle resource to container requesting DEFAULT partition.
 
+    * By default, a non-exclusive partition's idle resources can be borrowed by any queue's DEFAULT-partition requests, and such borrowing is **not** bounded by the queue's configured `accessible-node-labels.<label>.maximum-capacity` (it is reclaimed via preemption when the partition's owner needs it back). If you want borrowing to be bounded by each queue's `maximum-capacity` on that label, set `yarn.scheduler.capacity.non-exclusive-label.queue-limit-enable` to `true`. When enabled, a queue can borrow at most its `maximum-capacity` share of the partition's idle resources; queues that cannot access a label (capacity on it is 0) cannot borrow from it at all. This mirrors the capacity control that `RESPECT_PARTITION_EXCLUSIVITY` already applies.
+
 User can specify set of node labels which can be accessed by each queue, one application can only use subset of node labels that can be accessed by the queue which contains the application.
 
 Features

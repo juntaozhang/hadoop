@@ -766,7 +766,13 @@ public class UsersManager implements AbstractUsersManager {
       maxUserLimit = Resources.multiplyAndRoundDown(queueCapacity,
           getUserLimitFactor());
     } else if (schedulingMode == SchedulingMode.IGNORE_PARTITION_EXCLUSIVITY) {
-      maxUserLimit = partitionResource;
+      if (lQueue.isNonExclusiveLabelQueueLimitEnabled()) {
+        maxUserLimit = Resources.multiplyAndRoundDown(
+            lQueue.getEffectiveMaxCapacity(nodePartition),
+            getUserLimitFactor());
+      } else {
+        maxUserLimit = partitionResource;
+      }
     }
 
     // Cap final user limit with maxUserLimit
