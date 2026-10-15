@@ -27,3 +27,10 @@
 |------------|----------------------------------------------------------------------------|
 | HDFS-15553 | 引入 ReadWriteRpcCallQueue，读 RPC 批量合并以提升 NameNode RPC 吞吐        |
 | HDFS-13578 | ClientProtocol 方法加 ReadOnly 注解（SBN 读优化，cherry-pick a109f2b32f0） |
+
+## 20261014 Yarn Queue
+
+| JIRA       | 作用                                                                                                                                                         |
+|------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| YARN-11828 | 新增 `yarn.scheduler.capacity.non-exclusive-label.queue-limit-enable` 配置，开启后非独占分区的 DEFAULT 请求借用会受队列在该 label 上 maximum-capacity 的限制 |
+| YARN-11926 | 修复 `TestRMWebServicesReservation` 因时间戳过期导致的测试失败                                                                                               |
