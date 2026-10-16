@@ -29,6 +29,7 @@ import java.util.Set;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
+import org.apache.hadoop.yarn.api.records.Container;
 import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.api.records.NodeId;
 import org.apache.hadoop.yarn.api.records.NodeLabel;
@@ -42,6 +43,7 @@ import org.apache.hadoop.yarn.server.resourcemanager.nodelabels.NullRMNodeLabels
 import org.apache.hadoop.yarn.server.resourcemanager.nodelabels.RMNodeLabelsManager;
 import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMApp;
 import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppState;
+import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.RMAppAttempt;
 import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.RMAppAttemptState;
 import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainer;
 import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainerState;
@@ -1314,6 +1316,143 @@ public class TestNodeLabelContainerAllocation {
     LeafQueue leafQueue = (LeafQueue) cs.getQueue("a");
     Assert.assertEquals(5,
         leafQueue.getIgnoreExclusivityRMContainers().get("x").size());
+
+    rm1.close();
+  }
+
+  @Test(timeout = 60000)
+  public void testAMContainerAllocationWithNonExclusiveAllocationDisabled()
+      throws Exception {
+    /**
+     * With am-non-exclusive-allocation.enabled=false (default), an AM whose
+     * request is on DEFAULT cannot be allocated on a non-exclusive label x via
+     * the IGNORE_PARTITION_EXCLUSIVITY pass.
+     *
+     * <pre>
+     *   DEFAULT : (no nodes)            x : nm1 = 10GB (NON_EXCLUSIVE)
+     *   root
+     *    |-- a  (x: cap 50%, max-cap 50% -> 5GB on x)
+     *    |-- b  (x: cap 50%, max-cap 50%)
+     * </pre>
+     */
+    runAMNonExclusiveAllocationTest(false, RMAppAttemptState.SCHEDULED, 0);
+  }
+
+  @Test(timeout = 60000)
+  public void testAMContainerAllocationWithNonExclusiveAllocationEnabled()
+      throws Exception {
+    /**
+     * With am-non-exclusive-allocation.enabled=true, an AM whose request is on
+     * DEFAULT can be allocated on a non-exclusive label x via the
+     * IGNORE_PARTITION_EXCLUSIVITY pass.
+     *
+     * Note: ALLOCATED_SAVING is a transient state (see RMAppAttemptImpl state
+     * machine) that transitions to ALLOCATED asynchronously once the state
+     * store finishes saving the attempt, so the test tolerates both.
+     */
+    runAMNonExclusiveAllocationTest(true,
+        RMAppAttemptState.ALLOCATED_SAVING, 1);
+  }
+
+  private void runAMNonExclusiveAllocationTest(boolean amNonExclusiveEnabled,
+      RMAppAttemptState expectedState, int expectedContainersOnX)
+      throws Exception {
+    CapacitySchedulerConfiguration csConf =
+        new CapacitySchedulerConfiguration(this.conf);
+    csConf.setBoolean(
+        CapacitySchedulerConfiguration.AM_NON_EXCLUSIVE_ALLOCATION_ENABLED,
+        amNonExclusiveEnabled);
+
+    csConf.setQueues(CapacitySchedulerConfiguration.ROOT,
+        new String[] {"a", "b" });
+    csConf.setCapacityByLabel(CapacitySchedulerConfiguration.ROOT, "x", 100);
+
+    final String queueA = CapacitySchedulerConfiguration.ROOT + ".a";
+    csConf.setCapacity(queueA, 50);
+    csConf.setAccessibleNodeLabels(queueA, toSet("x"));
+    csConf.setCapacityByLabel(queueA, "x", 50);
+    csConf.setMaximumCapacityByLabel(queueA, "x", 50);
+
+    final String queueB = CapacitySchedulerConfiguration.ROOT + ".b";
+    csConf.setCapacity(queueB, 50);
+    csConf.setAccessibleNodeLabels(queueB, toSet("x"));
+    csConf.setCapacityByLabel(queueB, "x", 50);
+    csConf.setMaximumCapacityByLabel(queueB, "x", 50);
+
+    RMNodeLabelsManager localMgr = new NullRMNodeLabelsManager();
+    localMgr.init(this.conf);
+    localMgr.addToCluserNodeLabels(ImmutableSet.of(
+        NodeLabel.newInstance("x", false)));
+    localMgr.addLabelsToNode(ImmutableMap.of(
+        NodeId.newInstance("h1", 0), toSet("x")));
+
+    MockRM rm1 = new MockRM(csConf) {
+      @Override
+      public RMNodeLabelsManager createNodeLabelManager() {
+        return localMgr;
+      }
+    };
+    rm1.getRMContext().setNodeLabelManager(localMgr);
+    rm1.start();
+
+    MockNM nm1 = rm1.registerNode("h1:1234", 10 * GB); // label = x
+
+    CapacityScheduler cs = (CapacityScheduler) rm1.getResourceScheduler();
+    RMNode rmNode1 = rm1.getRMContext().getRMNodes().get(nm1.getNodeId());
+    SchedulerNode schedulerNode1 = cs.getSchedulerNode(nm1.getNodeId());
+
+    // AM requests DEFAULT, but only a non-exclusive x node exists.
+    RMApp app1 = rm1.submitApp(1 * GB, "app", "user", null, "a");
+
+    for (int i = 0; i < 50; i++) {
+      cs.handle(new NodeUpdateSchedulerEvent(rmNode1));
+    }
+
+    RMAppAttempt attempt = app1.getCurrentAppAttempt();
+    // ALLOCATED_SAVING is a transient state: it transitions to ALLOCATED
+    // asynchronously once the state store finishes saving the attempt. Wait for
+    // the attempt to leave SCHEDULED (i.e. get allocated) before checking,
+    // otherwise we race with that transition.
+    int maxWaitMs = 10000;
+    int pollIntervalMs = 100;
+    while (amNonExclusiveEnabled
+        && attempt.getAppAttemptState() == RMAppAttemptState.SCHEDULED
+        && maxWaitMs > 0) {
+      Thread.sleep(pollIntervalMs);
+      maxWaitMs -= pollIntervalMs;
+    }
+    RMAppAttemptState actualState = attempt.getAppAttemptState();
+    if (amNonExclusiveEnabled) {
+      // Either the transient ALLOCATED_SAVING or the stable ALLOCATED proves
+      // the AM was allocated on the non-exclusive label.
+      Assert.assertTrue(
+          "AM state wrong with am-non-exclusive-allocation.enabled=true, got "
+              + actualState,
+          actualState == RMAppAttemptState.ALLOCATED_SAVING
+              || actualState == RMAppAttemptState.ALLOCATED);
+    } else {
+      Assert.assertEquals(
+          "AM state wrong with am-non-exclusive-allocation.enabled=false",
+          expectedState, actualState);
+    }
+
+    Assert.assertEquals(
+        "Container count on x wrong with am-non-exclusive-allocation.enabled="
+            + amNonExclusiveEnabled,
+        expectedContainersOnX, schedulerNode1.getNumContainers());
+
+    if (amNonExclusiveEnabled) {
+      LeafQueue leafQueue = (LeafQueue) cs.getQueue("a");
+      Assert.assertEquals(
+          "AM should be tracked as ignore-exclusivity allocation",
+          expectedContainersOnX,
+          leafQueue.getIgnoreExclusivityRMContainers().get("x").size());
+
+      Container amContainer = attempt.getMasterContainer();
+      Assert.assertNotNull(
+          "AM should be allocated on label x when enabled", amContainer);
+      Assert.assertEquals(nm1.getNodeId(), amContainer.getNodeId());
+    }
 
     rm1.close();
   }

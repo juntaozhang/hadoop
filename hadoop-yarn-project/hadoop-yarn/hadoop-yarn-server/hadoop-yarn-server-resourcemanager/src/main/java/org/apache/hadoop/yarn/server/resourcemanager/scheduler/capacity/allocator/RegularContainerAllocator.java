@@ -48,6 +48,7 @@ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.activities.Activi
 
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CSAMContainerLaunchDiagnosticsConstants;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CSAssignment;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacityScheduler;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.SchedulingMode;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.common.fica.FiCaSchedulerApp;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.common.fica.FiCaSchedulerNode;
@@ -123,21 +124,26 @@ public class RegularContainerAllocator extends AbstractContainerAllocator {
       return ContainerAllocation.PRIORITY_SKIPPED;
     }
 
-    // AM container allocation doesn't support non-exclusive allocation to
-    // avoid painful of preempt an AM container
+    // AM container allocation doesn't support non-exclusive allocation unless
+    // explicitly enabled by configuration, to avoid painful of preempt an AM
+    // container.
     if (schedulingMode == SchedulingMode.IGNORE_PARTITION_EXCLUSIVITY) {
       if (application.isWaitingForAMContainer()) {
-        if (LOG.isDebugEnabled()) {
-          LOG.debug("Skip allocating AM container to app_attempt="
-              + application.getApplicationAttemptId()
-              + ", don't allow to allocate AM container in non-exclusive mode");
+        CapacityScheduler cs = (CapacityScheduler) rmContext.getScheduler();
+        if (!cs.getConfiguration().getAMNonExclusiveAllocationEnabled()) {
+          if (LOG.isDebugEnabled()) {
+            LOG.debug("Skip allocating AM container to app_attempt="
+                + application.getApplicationAttemptId()
+                + ", don't allow to allocate AM container in "
+                + "non-exclusive mode");
+          }
+          application.updateAppSkipNodeDiagnostics(
+              "Skipping assigning to Node in Ignore Exclusivity mode. ");
+          ActivitiesLogger.APP.recordSkippedAppActivityWithoutAllocation(
+              activitiesManager, node, application, priority,
+              ActivityDiagnosticConstant.SKIP_IN_IGNORE_EXCLUSIVITY_MODE);
+          return ContainerAllocation.APP_SKIPPED;
         }
-        application.updateAppSkipNodeDiagnostics(
-            "Skipping assigning to Node in Ignore Exclusivity mode. ");
-        ActivitiesLogger.APP.recordSkippedAppActivityWithoutAllocation(
-            activitiesManager, node, application, priority,
-            ActivityDiagnosticConstant.SKIP_IN_IGNORE_EXCLUSIVITY_MODE);
-        return ContainerAllocation.APP_SKIPPED;
       }
     }
 

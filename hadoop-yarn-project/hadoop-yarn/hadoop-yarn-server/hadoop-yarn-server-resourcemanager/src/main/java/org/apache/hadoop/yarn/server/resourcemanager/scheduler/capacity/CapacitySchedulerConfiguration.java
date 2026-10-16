@@ -348,6 +348,18 @@ public class CapacitySchedulerConfiguration extends ReservationSchedulerConfigur
   public static final boolean
       DEFAULT_NON_EXCLUSIVE_LABEL_QUEUE_LIMIT_ENABLE = false;
 
+  /**
+   * Allow AM containers to be allocated in non-exclusive mode (i.e. on a node
+   * whose partition is not explicitly requested by the AM).
+   */
+  @Private
+  public static final String AM_NON_EXCLUSIVE_ALLOCATION_ENABLED =
+      PREFIX + "am-non-exclusive-allocation.enabled";
+
+  @Private
+  public static final boolean
+      DEFAULT_AM_NON_EXCLUSIVE_ALLOCATION_ENABLED = false;
+
   /** Configuring absolute min/max resources in a queue. **/
   @Private
   public static final String MINIMUM_RESOURCE = "min-resource";
@@ -1657,6 +1669,11 @@ public class CapacitySchedulerConfiguration extends ReservationSchedulerConfigur
   public boolean getNonExclusiveLabelQueueLimitEnable() {
     return getBoolean(NON_EXCLUSIVE_LABEL_QUEUE_LIMIT_ENABLE,
         DEFAULT_NON_EXCLUSIVE_LABEL_QUEUE_LIMIT_ENABLE);
+  }
+
+  public boolean getAMNonExclusiveAllocationEnabled() {
+    return getBoolean(AM_NON_EXCLUSIVE_ALLOCATION_ENABLED,
+        DEFAULT_AM_NON_EXCLUSIVE_ALLOCATION_ENABLED);
   }
 
   public int getMaxAssignPerHeartbeat() {
