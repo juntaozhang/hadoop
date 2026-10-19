@@ -1,6 +1,6 @@
 # Changelog
 
-本分支基于 Hadoop 3.1.1
+本分支基于 Hadoop 3.1.1（hadoop-3.1.1.tar.gz MD5: `59619b49b1c2af82a05c9fa1172e1975`）
 
 ## 20260908 Yarn
 
@@ -28,9 +28,21 @@
 | HDFS-15553 | 引入 ReadWriteRpcCallQueue，读 RPC 批量合并以提升 NameNode RPC 吞吐        |
 | HDFS-13578 | ClientProtocol 方法加 ReadOnly 注解（SBN 读优化，cherry-pick a109f2b32f0） |
 
+## 20260919 原生编译修复
+
+| JIRA         | CHERRY PICK FROM | 作用                                                       |
+|--------------|------------------|------------------------------------------------------------|
+| HADOOP-17569 | 2717203f858f     | 修复 Fedora 33 下原生（native）代码编译失败的问题（#2886） |
+
 ## 20261014 Yarn Queue
 
 | JIRA       | 作用                                                                                                                                                         |
 |------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | YARN-11828 | 新增 `yarn.scheduler.capacity.non-exclusive-label.queue-limit-enable` 配置，开启后非独占分区的 DEFAULT 请求借用会受队列在该 label 上 maximum-capacity 的限制 |
 | YARN-11926 | 修复 `TestRMWebServicesReservation` 因时间戳过期导致的测试失败                                                                                               |
+
+## 20261019 MapReduce
+
+| JIRA           | CHERRY PICK FROM | 作用                                                                                                                       |
+|----------------|------------------|----------------------------------------------------------------------------------------------------------------------------|
+| MAPREDUCE-7131 | eb0b5a844f96     | 修复 Job History Server 将文件从 intermediate 移到 finished 时的竞态：误判文件仍在 intermediate，导致重复处理 / 状态不一致 |
