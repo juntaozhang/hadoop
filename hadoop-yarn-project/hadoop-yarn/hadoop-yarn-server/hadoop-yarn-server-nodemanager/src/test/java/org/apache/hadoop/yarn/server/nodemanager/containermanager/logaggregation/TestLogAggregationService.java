@@ -156,7 +156,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
-import org.eclipse.jetty.util.MultiException;
+import org.opentest4j.MultipleFailuresError;
 
 import java.util.function.Supplier;
 import org.slf4j.LoggerFactory;
@@ -257,14 +257,10 @@ public class TestLogAggregationService extends BaseContainerManagerTest {
       verify(delSrvc, times(2)).delete(argThat(new FileDeletionMatcher(
           delSrvc, user, null, dirList)));
 
-      String containerIdStr = container11.toString();
-      File containerLogDir = new File(app1LogDir, containerIdStr);
-      for (String fileType : new String[]{"stdout", "stderr", "syslog", "zero"}) {
-        File f = new File(containerLogDir, fileType);
-        GenericTestUtils.waitFor(() -> !f.exists(), 1000, 1000 * 50);
-        assertFalse(f.exists(), "File [" + f + "] was not deleted");
-      }
-      assertFalse(app1LogDir.exists(), "Directory [" + app1LogDir + "] was not deleted");
+      // Files and the app log directory are deleted by independent asynchronous
+      // tasks. Waiting for recursive directory deletion also covers the files.
+      GenericTestUtils.waitFor(() -> !app1LogDir.exists(), 1000, 1000 * 50,
+          "Directory [" + app1LogDir + "] was not deleted");
     } else {
       List<Path> dirList = new ArrayList<>();
       dirList.add(new Path(app1LogDir.toURI()));
@@ -1456,7 +1452,7 @@ public class TestLogAggregationService extends BaseContainerManagerTest {
     List<T> actualEvents = eventCaptor.getAllValues();
 
     // batch up exceptions so junit presents them as one
-    MultiException failures = new MultiException();
+    List<Throwable> failures = new ArrayList<>();
     try {
       assertEquals(expectedEvents.length, actualEvents.size(), "expected events");
     } catch (Throwable e) {
@@ -1499,7 +1495,11 @@ public class TestLogAggregationService extends BaseContainerManagerTest {
         }
       }
     }
-    failures.ifExceptionThrow();
+    if (!failures.isEmpty()) {
+      MultipleFailuresError error = new MultipleFailuresError("checkEvents", failures);
+      failures.forEach(error::addSuppressed);
+      throw error;
+    }
   }
   
   private static String eventToString(Event<?> event, String[] methods) throws Exception {

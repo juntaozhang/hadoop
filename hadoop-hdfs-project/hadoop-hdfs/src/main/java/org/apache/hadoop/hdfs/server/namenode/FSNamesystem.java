@@ -3373,6 +3373,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     checkOperation(OperationCategory.WRITE);
     final FSPermissionChecker pc = getPermissionChecker();
     FSPermissionChecker.setOperationType(operationName);
+    FSPermissionChecker.setRenameToTrash(false);
     try {
       writeLock(RwLockMode.FS);
       try {
@@ -3405,6 +3406,9 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     checkOperation(OperationCategory.WRITE);
     final FSPermissionChecker pc = getPermissionChecker();
     FSPermissionChecker.setOperationType(operationName);
+    final boolean renameToTrash = options != null
+        && Arrays.asList(options).contains(Options.Rename.TO_TRASH);
+    FSPermissionChecker.setRenameToTrash(renameToTrash);
     try {
       writeLock(RwLockMode.GLOBAL);
       try {
@@ -3421,6 +3425,8 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
       logAuditEvent(false, operationName + " (options=" +
           Arrays.toString(options) + ")", src, dst, null);
       throw e;
+    } finally {
+      FSPermissionChecker.setRenameToTrash(false);
     }
     getEditLog().logSync();
     assert res != null;
@@ -5914,6 +5920,24 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
   public int getNumDecommissioningDataNodes() {
     return getBlockManager().getDatanodeManager().getDecommissioningNodes()
         .size();
+  }
+
+  /**
+   * Sum of the low redundancy blocks tracked for each datanode that is in
+   * decommissioning state, i.e. the blocks that still have to be sufficiently
+   * replicated before the decommissioning datanodes can be decommissioned.
+   * This is the total of the per node value reported by
+   * {@link #getDecomNodes()}.
+   */
+  @Metric({"DecommissioningLowRedundancyBlocks",
+      "Number of low redundancy blocks on datanodes in decommissioning state"})
+  public long getDecommissioningLowRedundancyBlocks() {
+    long blocks = 0;
+    for (DatanodeDescriptor node :
+        getBlockManager().getDatanodeManager().getDecommissioningNodes()) {
+      blocks += node.getLeavingServiceStatus().getUnderReplicatedBlocks();
+    }
+    return blocks;
   }
 
   @Override // FSNamesystemMBean
