@@ -940,6 +940,7 @@ public class SchedulerApplicationAttempt implements SchedulableEntity {
       Iterator<RMContainer> tempIter = tempContainerToKill.iterator();
       while (tempIter.hasNext()) {
         RMContainer c = tempIter.next();
+        ((RMContainerImpl) c).markAsTemporary();
         // Mark container for release (set RRs to null, so RM does not think
         // it is a recoverable container)
         ((RMContainerImpl) c).setContainerRequest(null);

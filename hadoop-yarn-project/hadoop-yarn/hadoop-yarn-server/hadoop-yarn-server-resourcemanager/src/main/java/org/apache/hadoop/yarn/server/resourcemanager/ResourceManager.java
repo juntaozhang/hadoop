@@ -242,6 +242,7 @@ public class ResourceManager extends CompositeService implements Recoverable {
   @Override
   protected void serviceInit(Configuration conf) throws Exception {
     this.conf = conf;
+    ContainerLifecycleMetrics.getMetrics(conf);
     this.rmContext = new RMContextImpl();
     rmContext.setResourceManager(this);
 
@@ -1234,6 +1235,7 @@ public class ResourceManager extends CompositeService implements Recoverable {
 
   void reinitialize(boolean initialize) {
     ClusterMetrics.destroy();
+    ContainerLifecycleMetrics.destroy();
     QueueMetrics.clearQueueMetrics();
     getResourceScheduler().resetSchedulerMetrics();
     if (initialize) {
@@ -1253,6 +1255,7 @@ public class ResourceManager extends CompositeService implements Recoverable {
       return;
     }
     LOG.info("Transitioning to active state");
+    ContainerLifecycleMetrics.getMetrics(conf);
 
     this.rmLoginUGI.doAs(new PrivilegedExceptionAction<Void>() {
       @Override
@@ -1336,6 +1339,7 @@ public class ResourceManager extends CompositeService implements Recoverable {
       zkManager.close();
     }
     transitionToStandby(false);
+    ContainerLifecycleMetrics.destroy();
     rmContext.setHAServiceState(HAServiceState.STOPPING);
   }
   

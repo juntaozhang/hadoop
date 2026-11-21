@@ -100,6 +100,21 @@ public class TestNodeManagerMetrics {
     metrics.addContainerLaunchDuration(1);
     Assert.assertTrue(metrics.containerLaunchDuration.changed());
 
+    metrics.addContainerExecutionDuration(5000);
+    metrics.addContainerExecutionDuration(10000);
+    MetricsRecordBuilder executionDurationMetrics =
+        getMetrics("NodeManagerMetrics");
+    assertCounter("ContainerExecutionDurationNumOps", 2L,
+        executionDurationMetrics);
+    assertGauge("ContainerExecutionDurationAvgTime", 7500.0,
+        executionDurationMetrics);
+
+    metrics.addContainerLifecycle(3000);
+    metrics.addContainerLifecycle(9000);
+    MetricsRecordBuilder lifecycleMetrics = getMetrics("NodeManagerMetrics");
+    assertCounter("ContainerLifecycleNumOps", 2L, lifecycleMetrics);
+    assertGauge("ContainerLifecycleAvgTime", 6000.0, lifecycleMetrics);
+
     // availableGB is expected to be floored,
     // while allocatedGB is expected to be ceiled.
     // allocatedGB: 3.75GB allocated memory is shown as 4GB

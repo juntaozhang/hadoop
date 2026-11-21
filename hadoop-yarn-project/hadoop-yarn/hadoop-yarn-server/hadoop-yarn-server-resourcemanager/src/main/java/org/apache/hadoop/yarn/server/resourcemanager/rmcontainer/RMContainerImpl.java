@@ -42,6 +42,7 @@ import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.event.EventHandler;
 import org.apache.hadoop.yarn.server.api.protocolrecords.NMContainerStatus;
+import org.apache.hadoop.yarn.server.resourcemanager.ContainerLifecycleMetrics;
 import org.apache.hadoop.yarn.server.resourcemanager.RMContext;
 import org.apache.hadoop.yarn.server.resourcemanager.nodelabels.RMNodeLabelsManager;
 import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMApp;
@@ -177,6 +178,7 @@ public class RMContainerImpl implements RMContainer {
   private SchedulerRequestKey reservedSchedulerKey;
   private long creationTime;
   private long finishTime;
+  private volatile boolean temporary;
   private ContainerStatus finishedStatus;
   private boolean isAMContainer;
   private ContainerRequest containerRequestForRecovery;
@@ -358,6 +360,10 @@ public class RMContainerImpl implements RMContainer {
     } finally {
       readLock.unlock();
     }
+  }
+
+  public void markAsTemporary() {
+    temporary = true;
   }
 
   @Override
@@ -704,6 +710,10 @@ public class RMContainerImpl implements RMContainer {
       RMContainerFinishedEvent finishedEvent = (RMContainerFinishedEvent) event;
 
       container.finishTime = System.currentTimeMillis();
+      if (!container.temporary) {
+        ContainerLifecycleMetrics.getMetrics().addContainerLifecycle(
+            Math.max(0, container.finishTime - container.creationTime));
+      }
       container.finishedStatus = finishedEvent.getRemoteContainerStatus();
       // Inform AppAttempt
       // container.getContainer() can return null when a RMContainer is a

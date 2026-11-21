@@ -1285,6 +1285,7 @@ public abstract class AbstractYarnScheduler
         sk, appAttempt.getApplicationAttemptId(),
         decreasedContainer.getNodeId(), appAttempt.getUser(), rmContext,
         rmContainer.isRemotelyAllocated());
+    ((RMContainerImpl) newRmContainer).markAsTemporary();
     appAttempt.addRMContainer(decreasedContainer.getId(), rmContainer);
     ((AbstractYarnScheduler) rmContext.getScheduler()).getNode(
         decreasedContainer.getNodeId()).allocateContainer(newRmContainer);
@@ -1306,8 +1307,11 @@ public abstract class AbstractYarnScheduler
         sk.getPriority(), null, ExecutionType.OPPORTUNISTIC,
         sk.getAllocationRequestId());
     demotedContainer.setVersion(rmContainer.getContainer().getVersion());
-    return SchedulerUtils.createOpportunisticRmContainer(
-        rmContext, demotedContainer, false);
+    RMContainer demotedRMContainer =
+        SchedulerUtils.createOpportunisticRmContainer(
+            rmContext, demotedContainer, false);
+    ((RMContainerImpl) demotedRMContainer).markAsTemporary();
+    return demotedRMContainer;
   }
 
   /**

@@ -54,6 +54,10 @@ public class NodeManagerMetrics {
   @Metric MutableGaugeInt availableVCores;
   @Metric("Container launch duration")
       MutableRate containerLaunchDuration;
+  @Metric("Container execution duration")
+      MutableRate containerExecutionDuration;
+  @Metric("Container lifecycle")
+      MutableRate containerLifecycle;
   @Metric("# of bad local dirs")
       MutableGaugeInt badLocalDirs;
   @Metric("# of bad log dirs")
@@ -217,6 +221,14 @@ public class NodeManagerMetrics {
 
   public void addContainerLaunchDuration(long value) {
     containerLaunchDuration.add(value);
+  }
+
+  public void addContainerExecutionDuration(long value) {
+    containerExecutionDuration.add(value);
+  }
+
+  public void addContainerLifecycle(long value) {
+    containerLifecycle.add(value);
   }
 
   public void setBadLocalDirs(int badLocalDirs) {

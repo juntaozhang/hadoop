@@ -44,6 +44,7 @@ import com.google.common.annotations.VisibleForTesting;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.security.Credentials;
+import org.apache.hadoop.util.Time;
 import org.apache.hadoop.yarn.api.records.ContainerExitStatus;
 import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.api.records.ContainerLaunchContext;
@@ -165,6 +166,8 @@ public class ContainerImpl implements Container {
   private boolean wasLaunched;
   private long containerLocalizationStartTime;
   private long containerLaunchStartTime;
+  private long containerExecutionStartTime = -1;
+  private boolean skipRecoveredExecution;
   private ContainerMetrics containerMetrics;
   private static Clock clock = SystemClock.getInstance();
 
@@ -290,6 +293,8 @@ public class ContainerImpl implements Container {
     this(conf, dispatcher, launchContext, creds, metrics,
         containerTokenIdentifier, context, rcs.getStartTime());
     this.recoveredStatus = rcs.getStatus();
+    this.skipRecoveredExecution =
+        recoveredStatus == RecoveredContainerStatus.LAUNCHED;
     this.exitCode = rcs.getExitCode();
     this.recoveredAsKilled = rcs.getKilled();
     this.diagnostics.append(rcs.getDiagnostics());
@@ -1019,6 +1024,20 @@ public class ContainerImpl implements Container {
         new ContainersLauncherEvent(this, launcherEvent));
   }
 
+  private void startContainerExecution() {
+    containerExecutionStartTime = Time.monotonicNow();
+  }
+
+  private void finishContainerExecution() {
+    if (containerExecutionStartTime < 0) {
+      return;
+    }
+    long executionDuration =
+        Time.monotonicNow() - containerExecutionStartTime;
+    containerExecutionStartTime = -1;
+    metrics.addContainerExecutionDuration(executionDuration);
+  }
+
   // Inform the ContainersMonitor to start monitoring the container's
   // resource usage.
   @SuppressWarnings("unchecked") // dispatcher not typed
@@ -1463,6 +1482,11 @@ public class ContainerImpl implements Container {
     @SuppressWarnings("unchecked")
     @Override
     public void transition(ContainerImpl container, ContainerEvent event) {
+      if (container.skipRecoveredExecution) {
+        container.skipRecoveredExecution = false;
+      } else {
+        container.startContainerExecution();
+      }
       container.sendContainerMonitorStartEvent();
       container.metrics.runningContainer();
       container.wasLaunched  = true;
@@ -1521,6 +1545,7 @@ public class ContainerImpl implements Container {
     @Override
     public void transition(ContainerImpl container, ContainerEvent event) {
 
+      container.finishContainerExecution();
       container.setIsReInitializing(false);
       // Set exit code to 0 on success    	
       container.exitCode = 0;
@@ -1557,6 +1582,7 @@ public class ContainerImpl implements Container {
 
     @Override
     public void transition(ContainerImpl container, ContainerEvent event) {
+      container.finishContainerExecution();
       container.setIsReInitializing(false);
       ContainerExitEvent exitEvent = (ContainerExitEvent) event;
       container.exitCode = exitEvent.getExitCode();
@@ -1593,6 +1619,7 @@ public class ContainerImpl implements Container {
     @Override
     public ContainerState transition(final ContainerImpl container,
         ContainerEvent event) {
+      container.finishContainerExecution();
       ContainerExitEvent exitEvent = (ContainerExitEvent) event;
       container.exitCode = exitEvent.getExitCode();
       if (exitEvent.getDiagnosticInfo() != null) {
@@ -1702,6 +1729,7 @@ public class ContainerImpl implements Container {
         ContainerEvent event) {
       LOG.info("Relaunching Container [" + container.getContainerId()
           + "] for re-initialization !!");
+      container.finishContainerExecution();
       container.wasLaunched  = false;
       container.metrics.endRunningContainer();
 
@@ -1832,6 +1860,7 @@ public class ContainerImpl implements Container {
       SingleArcTransition<ContainerImpl, ContainerEvent> {
     @Override
     public void transition(ContainerImpl container, ContainerEvent event) {
+      container.finishContainerExecution();
       ContainerExitEvent exitEvent = (ContainerExitEvent) event;
       if (container.hasDefaultExitCode()) {
         container.exitCode = exitEvent.getExitCode();
@@ -1977,6 +2006,7 @@ public class ContainerImpl implements Container {
       ContainerDoneTransition {
     @Override
     public void transition(ContainerImpl container, ContainerEvent event) {
+      container.finishContainerExecution();
       container.metrics.killedContainer();
       NMAuditLogger.logSuccess(container.user,
           AuditConstants.FINISH_KILLED_CONTAINER, "ContainerImpl",
@@ -2088,6 +2118,10 @@ public class ContainerImpl implements Container {
         LOG.warn("Can't handle this event at current state: Current: ["
             + oldState + "], eventType: [" + event.getType() + "]," +
             " container: [" + containerID + "]", e);
+      }
+      if (newState == ContainerState.DONE && oldState != ContainerState.DONE) {
+        metrics.addContainerLifecycle(
+            Math.max(0, clock.getTime() - startTime));
       }
       if (newState != null && oldState != newState) {
         LOG.info("Container " + containerID + " transitioned from "

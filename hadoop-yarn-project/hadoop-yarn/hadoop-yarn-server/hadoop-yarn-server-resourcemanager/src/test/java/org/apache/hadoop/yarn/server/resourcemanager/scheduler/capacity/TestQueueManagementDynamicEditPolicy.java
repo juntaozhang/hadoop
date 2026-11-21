@@ -97,6 +97,7 @@ public class TestQueueManagementDynamicEditPolicy extends
       mockRM.waitForState(user1AppId, RMAppState.KILLED);
 
       policy.editSchedule();
+      mockRM.drainEvents();
       waitForPolicyState(0.1f, autoCreatedQueueManagementPolicy, NO_LABEL,
           1000);
 

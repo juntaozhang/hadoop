@@ -1003,6 +1003,13 @@ public class YarnConfiguration extends Configuration {
   public static final String DEFAULT_RM_METRICS_RUNTIME_BUCKETS = 
     "60,300,1440";
 
+  /** Rolling intervals in seconds for container lifecycle quantiles. */
+  public static final String RM_CONTAINER_LIFECYCLE_QUANTILE_INTERVALS =
+      RM_PREFIX + "container.lifecycle.quantile.intervals";
+
+  public static final String
+      DEFAULT_RM_CONTAINER_LIFECYCLE_QUANTILE_INTERVALS = "60,300,3600";
+
   public static final String RM_AMRM_TOKEN_MASTER_KEY_ROLLING_INTERVAL_SECS = RM_PREFIX
       + "am-rm-tokens.master-key-rolling-interval-secs";
 

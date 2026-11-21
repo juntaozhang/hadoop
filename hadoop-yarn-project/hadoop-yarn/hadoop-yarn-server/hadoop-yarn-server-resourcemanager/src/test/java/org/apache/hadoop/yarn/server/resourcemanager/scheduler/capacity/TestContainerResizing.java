@@ -18,6 +18,9 @@
 
 package org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity;
 
+import static org.apache.hadoop.test.MetricsAsserts.getLongCounter;
+import static org.apache.hadoop.test.MetricsAsserts.getMetrics;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -194,6 +197,8 @@ public class TestContainerResizing {
     ContainerId containerId1 =
         ContainerId.newContainerId(am1.getApplicationAttemptId(), 1);
     sentRMContainerLaunched(rm1, containerId1);
+    long lifecycleNumOps = getLongCounter("ContainerLifecycleNumOps",
+        getMetrics("ContainerLifecycleMetrics"));
 
     // am1 asks to change its AM container from 1GB to 3GB
     AllocateResponse response = am1.sendContainerResizingRequest(Arrays
@@ -206,6 +211,9 @@ public class TestContainerResizing {
 
     // Wait for scheduler to finish processing kill events..
     dispatcher.waitForEventThreadToWait();
+    Assert.assertEquals(lifecycleNumOps,
+        getLongCounter("ContainerLifecycleNumOps",
+            getMetrics("ContainerLifecycleMetrics")));
 
     checkUsedResource(rm1, "default", 1 * GB, null);
     Assert.assertEquals(1 * GB,

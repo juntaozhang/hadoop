@@ -18,6 +18,9 @@
 
 package org.apache.hadoop.yarn.server.resourcemanager.rmcontainer;
 
+import static org.apache.hadoop.test.MetricsAsserts.getDoubleGauge;
+import static org.apache.hadoop.test.MetricsAsserts.getLongCounter;
+import static org.apache.hadoop.test.MetricsAsserts.getMetrics;
 import static org.junit.Assert.assertEquals;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyLong;
@@ -35,6 +38,7 @@ import java.util.concurrent.ConcurrentMap;
 
 import com.google.common.collect.ImmutableSet;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.metrics2.lib.DefaultMetricsSystem;
 import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.Container;
@@ -50,6 +54,7 @@ import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.event.DrainDispatcher;
 import org.apache.hadoop.yarn.event.EventHandler;
 import org.apache.hadoop.yarn.server.api.protocolrecords.NMContainerStatus;
+import org.apache.hadoop.yarn.server.resourcemanager.ContainerLifecycleMetrics;
 import org.apache.hadoop.yarn.server.resourcemanager.MockAM;
 import org.apache.hadoop.yarn.server.resourcemanager.MockNM;
 import org.apache.hadoop.yarn.server.resourcemanager.MockRM;
@@ -72,6 +77,7 @@ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.constraint.Alloca
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.constraint.AllocationTagsManager;
 import org.apache.hadoop.yarn.server.scheduler.SchedulerRequestKey;
 import org.apache.hadoop.yarn.server.utils.BuilderUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
@@ -80,6 +86,20 @@ import org.mockito.Mockito;
 
 @SuppressWarnings({ "unchecked", "rawtypes" })
 public class TestRMContainerImpl {
+
+  private long getLifecycleNumOps() {
+    if (DefaultMetricsSystem.instance()
+        .getSource("ContainerLifecycleMetrics") == null) {
+      return 0;
+    }
+    return getLongCounter("ContainerLifecycleNumOps",
+        getMetrics("ContainerLifecycleMetrics"));
+  }
+
+  @After
+  public void tearDown() {
+    ContainerLifecycleMetrics.destroy();
+  }
 
   @Test
   public void testReleaseWhileRunning() {
@@ -153,6 +173,8 @@ public class TestRMContainerImpl {
     assertEquals("http://host:3465/node/containerlogs/container_1_0001_01_000001/user",
         rmContainer.getLogURL());
 
+    long lifecycleNumOps = getLifecycleNumOps();
+
     // In RUNNING state. Verify RELEASED and associated actions.
     reset(appAttemptEventHandler);
     ContainerStatus containerStatus = SchedulerUtils
@@ -169,6 +191,7 @@ public class TestRMContainerImpl {
     assertEquals(ContainerState.COMPLETE, rmContainer.getContainerState());
     verify(writer).containerFinished(any(RMContainer.class));
     verify(publisher).containerFinished(any(RMContainer.class), anyLong());
+    assertEquals(lifecycleNumOps + 1, getLifecycleNumOps());
 
     ArgumentCaptor<RMAppAttemptContainerFinishedEvent> captor = ArgumentCaptor
         .forClass(RMAppAttemptContainerFinishedEvent.class);
@@ -183,6 +206,100 @@ public class TestRMContainerImpl {
         .createAbnormalContainerStatus(containerId, "FinishedContainer"),
         RMContainerEventType.FINISHED));
     assertEquals(RMContainerState.RELEASED, rmContainer.getState());
+    assertEquals(lifecycleNumOps + 1, getLifecycleNumOps());
+  }
+
+  @Test
+  public void testContainerLifecycleAcrossTerminalStates() {
+    DrainDispatcher dispatcher = new DrainDispatcher();
+    dispatcher.init(new YarnConfiguration());
+    dispatcher.start();
+    ApplicationAttemptId appAttemptId = BuilderUtils.newApplicationAttemptId(
+        BuilderUtils.newApplicationId(1, 1), 1);
+    NodeId nodeId = BuilderUtils.newNodeId("host", 3425);
+    ContainerAllocationExpirer expirer = mock(ContainerAllocationExpirer.class);
+    RMContext rmContext = mock(RMContext.class);
+    when(rmContext.getDispatcher()).thenReturn(dispatcher);
+    when(rmContext.getContainerAllocationExpirer()).thenReturn(expirer);
+    RMApplicationHistoryWriter writer = mock(RMApplicationHistoryWriter.class);
+    when(rmContext.getRMApplicationHistoryWriter()).thenReturn(writer);
+    when(rmContext.getRMApps()).thenReturn(
+        new ConcurrentHashMap<ApplicationId, RMApp>());
+    SystemMetricsPublisher publisher = mock(SystemMetricsPublisher.class);
+    when(rmContext.getSystemMetricsPublisher()).thenReturn(publisher);
+    AllocationTagsManager allocationTagsManager =
+        mock(AllocationTagsManager.class);
+    when(rmContext.getAllocationTagsManager())
+        .thenReturn(allocationTagsManager);
+    YarnConfiguration conf = new YarnConfiguration();
+    conf.setBoolean(
+        YarnConfiguration.APPLICATION_HISTORY_SAVE_NON_AM_CONTAINER_META_INFO,
+        true);
+    when(rmContext.getYarnConfiguration()).thenReturn(conf);
+
+    Resource resource = BuilderUtils.newResource(512, 1);
+    ContainerId reservedId = BuilderUtils.newContainerId(appAttemptId, 1);
+    Container reservedContainer = BuilderUtils.newContainer(reservedId, nodeId,
+        "host:3465", resource, BuilderUtils.newPriority(5), null);
+    SchedulerRequestKey schedulerKey =
+        SchedulerRequestKey.extractFrom(reservedContainer);
+    RMContainerImpl reserved = new RMContainerImpl(reservedContainer,
+        schedulerKey, appAttemptId, nodeId, "user", rmContext,
+        System.currentTimeMillis() - 60000, "", false);
+    long numOps = getLifecycleNumOps();
+    reserved.handle(new RMContainerReservedEvent(reservedId, resource, nodeId,
+        schedulerKey));
+    reserved.handle(new RMContainerEvent(reservedId,
+        RMContainerEventType.START));
+    reserved.handle(new RMContainerEvent(reservedId,
+        RMContainerEventType.ACQUIRED));
+    reserved.handle(new RMContainerEvent(reservedId,
+        RMContainerEventType.LAUNCHED));
+    reserved.handle(new RMContainerFinishedEvent(reservedId,
+        SchedulerUtils.createAbnormalContainerStatus(reservedId, "Finished"),
+        RMContainerEventType.FINISHED));
+    assertEquals(numOps + 1, getLifecycleNumOps());
+    double avgTime = getDoubleGauge("ContainerLifecycleAvgTime",
+        getMetrics("ContainerLifecycleMetrics"));
+    Assert.assertTrue(avgTime >= 60000);
+
+    long expectedNumOps = numOps + 1;
+    int allocatedId = 3;
+    for (RMContainerEventType eventType : new RMContainerEventType[]{
+        RMContainerEventType.EXPIRE, RMContainerEventType.KILL}) {
+      ContainerId containerId =
+          BuilderUtils.newContainerId(appAttemptId, allocatedId++);
+      Container container = BuilderUtils.newContainer(containerId, nodeId,
+          "host:3465", resource, BuilderUtils.newPriority(5), null);
+      RMContainerImpl allocated = new RMContainerImpl(container,
+          SchedulerRequestKey.extractFrom(container), appAttemptId, nodeId,
+          "user", rmContext);
+      allocated.handle(new RMContainerEvent(containerId,
+          RMContainerEventType.START));
+      allocated.handle(new RMContainerFinishedEvent(containerId,
+          SchedulerUtils.createAbnormalContainerStatus(containerId, "Finished"),
+          eventType));
+      assertEquals(++expectedNumOps, getLifecycleNumOps());
+    }
+
+    ContainerId temporaryId = BuilderUtils.newContainerId(appAttemptId, 2);
+    Container temporaryContainer = BuilderUtils.newContainer(temporaryId,
+        nodeId, "host:3465", resource, BuilderUtils.newPriority(5), null);
+    RMContainerImpl temporary = new RMContainerImpl(temporaryContainer,
+        SchedulerRequestKey.extractFrom(temporaryContainer), appAttemptId,
+        nodeId, "user", rmContext);
+    temporary.markAsTemporary();
+    temporary.handle(new RMContainerEvent(temporaryId,
+        RMContainerEventType.START));
+    temporary.handle(new RMContainerEvent(temporaryId,
+        RMContainerEventType.ACQUIRED));
+    temporary.handle(new RMContainerEvent(temporaryId,
+        RMContainerEventType.LAUNCHED));
+    temporary.handle(new RMContainerFinishedEvent(temporaryId,
+        SchedulerUtils.createAbnormalContainerStatus(temporaryId, "Finished"),
+        RMContainerEventType.FINISHED));
+    assertEquals(numOps + 3, getLifecycleNumOps());
+    dispatcher.stop();
   }
 
   @Test

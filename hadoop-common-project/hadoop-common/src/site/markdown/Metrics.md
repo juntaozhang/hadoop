@@ -491,6 +491,20 @@ ClusterMetrics shows the metrics of the YARN cluster from the ResourceManager's 
 | `AMRegisterDelayNumOps` | Total number of AMs registered  |
 | `AMRegisterDelayAvgTime` | Average time in milliseconds AM spends to register with RM after the AM container gets launched |
 
+ContainerLifecycleMetrics
+------------------
+
+ContainerLifecycleMetrics shows aggregate duration metrics for real containers that reach ALLOCATED and are later completed by the ResourceManager. The lifecycle duration is measured from RM container creation until RM processes its completion, including any time spent in the RESERVED state. Containers cancelled while still in NEW or RESERVED are excluded. Synthetic RM containers used internally for resource decrease, increase, promotion, or demotion updates are also excluded; only the lifecycle of the real container is recorded.
+
+In `ContainerLifecycle`*num*`s metrics, *num* is the rolling quantile interval in seconds. Set `yarn.resourcemanager.container.lifecycle.quantile.intervals` in yarn-site.xml to configure the intervals. The default values are `60,300,3600`.
+
+| Name | Description |
+|:---- |:---- |
+| `ContainerLifecycleNumOps` | Cumulative number of completed containers recorded by RM |
+| `ContainerLifecycleAvgTime` | Average container lifecycle duration in milliseconds |
+| `ContainerLifecycle`*num*`sNumOps` | Number of completed containers in the latest *num*-second quantile window |
+| `ContainerLifecycle`*num*`s{50,75,90,95,99}thPercentileMillis` | Container lifecycle percentiles in milliseconds for the latest completed *num*-second window |
+
 QueueMetrics
 ------------
 
@@ -556,6 +570,8 @@ NodeManagerMetrics shows the statistics of the containers in the node. Each metr
 | `allocatedVcores` | Current used vcores|
 | `availableVcores` | Current available vcores |
 | `containerLaunchDuration` | Average time duration in milliseconds NM takes to launch a container|
+| `containerExecutionDuration` | Average time duration in milliseconds NM takes to execute a container from entering RUNNING until successful completion, failure, or kill. Containers terminating before RUNNING and time between relaunch/reinitialization periods are excluded. Paused time within an execution period is included. Recovered execution periods without a persisted start time are excluded. |
+| `containerLifecycle` | Average time duration in milliseconds from NM receiving a container start request until the container reaches DONE. All terminal outcomes, including failure or kill before RUNNING, cleanup, relaunch/reinitialization, and recovered containers are included. RM creates no corresponding NM start request for its synthetic resource-update containers, so these containers produce no NM lifecycle samples. |
 | `badLocalDirs` | Current number of bad local directories. Currently, a disk that cannot be read/written/executed by NM process or A disk being full is considered as bad.|
 | `badLogDirs` | Current number of bad log directories. Currently, a disk that cannot be read/written/executed by NM process or A disk being full is considered as bad. |
 | `goodLocalDirsDiskUtilizationPerc` | Current disk utilization percentage across all good local directories |
